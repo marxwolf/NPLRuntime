@@ -94,9 +94,10 @@ namespace ParaEngine
 		*	if file extension is "dds", both format and mip levels are loaded from the file.
 		*	if file extension is "png" and file name ends with "_32bits", format is D3DFMT_A8R8G8B8, mip level is 1.
 		*	if file extension is "png" and file name does not ends with "_32bits", format is DXT3, complete mip level chain is created.
+		*   if file extension is "png" and file path contains "blocks", we will use 32bits texture and full mipmap levels. if filename further contains "leaves" it will only has 1 mip level. 
 		*	in all other cases, such as "tga", format is D3DFMT_UNKNOWN and mip level is D3DX_DEFAULT.
 		*/
-		static void GetFormatAndMipLevelFromFileName(const string& filename, D3DFORMAT* pdwTextureFormat, UINT* pnMipLevels);
+		 static void GetFormatAndMipLevelFromFileName(const string& filename, D3DFORMAT* pdwTextureFormat, UINT* pnMipLevels);
 
 		/**
 		* determine the texture format and mip level from file name. the texture is usually static texture.
@@ -131,6 +132,7 @@ namespace ParaEngine
 		* @param nFormat: default to 32bits ARGB. PixelFormat24bppRGB, PixelFormat16bppGrayScale, PixelFormat8bppIndexed, PixelFormat32bppARGB, etc
 		*/
 		static bool LoadImageOfFormat(const std::string& sTextureFileName, char *sBufMemFile, int sizeBuf, int &width, int &height, byte ** ppBuffer, int* pBytesPerPixel = NULL, int nFormat = -1);
+		static bool LoadImageOfFormatEx(const std::string& sTextureFileName, char *sBufMemFile, int sizeBuf, int &width, int &height, byte ** ppBuffer, int* pBytesPerPixel = NULL, int nFormat = -1, ImageExtendInfo *info = nullptr);
 
 		/** Copy render target content from one surface to another. they may be of different resolution */
 		static bool StretchRect(TextureEntityDirectX * pSrcTexture, TextureEntityDirectX * pDestTexture);

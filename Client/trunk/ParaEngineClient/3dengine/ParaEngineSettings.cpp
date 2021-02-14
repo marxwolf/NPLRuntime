@@ -38,7 +38,7 @@
 	#include "util/EnumProcess.hpp"
 #endif
 #endif
-
+#include <boost/thread/tss.hpp>
 #include <time.h>
 
 using namespace ParaEngine;
@@ -48,6 +48,13 @@ using namespace luabind;
 /** the default locale in this compilation. */
 #define DEFAULT_LOCALE	"zhCN"
 //#define DEFAULT_LOCALE	"enUS"
+
+
+#ifdef WIN32
+bool ParaEngine::ParaEngineSettings::m_bSandboxMode = true;
+#else
+bool ParaEngine::ParaEngineSettings::m_bSandboxMode = false;
+#endif
 
 ParaEngineSettings::ParaEngineSettings(void)
 	:m_currentLanguage(-1)
@@ -300,7 +307,11 @@ void ParaEngineSettings::LoadGameEffectSet(int nSetID)
 		break;
 	}
 #elif defined(USE_OPENGL_RENDERER)
-	CGlobals::GetEffectManager()->SetDefaultEffectMapping(0);
+	//CGlobals::GetEffectManager()->SetDefaultEffectMapping(0);
+	CGlobals::GetEffectManager()->SetDefaultEffectMapping(20);
+	ParaScripting::ParaScene::EnableLighting(true);
+	ParaScripting::ParaScene::SetShadowMethod(0);
+	CGlobals::GetScene()->EnableFullScreenGlow(false);
 #endif
 }
 
@@ -725,6 +736,26 @@ void ParaEngine::ParaEngineSettings::SetScreenResolution( const Vector2& vSize )
 		CGlobals::GetApp()->SetScreenResolution(vSize);
 }
 
+void ParaEngine::ParaEngineSettings::SetLockWindowSize(bool bEnabled)
+{
+	auto app = CGlobals::GetApp();
+	if (app)
+	{
+		app->FixWindowSize(bEnabled);
+	}
+}
+
+const char* ParaEngine::ParaEngineSettings::GetWritablePath()
+{
+	return CParaFile::GetWritablePath().c_str();
+}
+
+void ParaEngine::ParaEngineSettings::SetWritablePath(const char* sPath)
+{
+	if(sPath!=NULL)
+		CParaFile::SetWritablePath(sPath);
+}
+
 void ParaEngine::ParaEngineSettings::SetFullScreenMode( bool bFullscreen )
 {
 	if(CGlobals::GetApp())
@@ -970,6 +1001,16 @@ Vector2 ParaEngine::ParaEngineSettings::GetWindowResolution()
 #endif
 }
 
+bool ParaEngine::ParaEngineSettings::IsSandboxMode()
+{
+	return m_bSandboxMode;
+}
+
+void ParaEngine::ParaEngineSettings::SetSandboxMode(bool val)
+{
+	m_bSandboxMode = val;
+}
+
 void ParaEngine::ParaEngineSettings::SetDefaultOpenFileFolder(const char* sDefaultOpenFileFolder)
 {
 #ifdef PARAENGINE_CLIENT
@@ -1120,7 +1161,6 @@ bool ParaEngine::ParaEngineSettings::Is64BitsSystem()
 	return sizeof(void*) > 4;
 }
 
-
 void ParaEngine::ParaEngineSettings::LoadNameIndex()
 {
 	m_name_to_index.clear();
@@ -1133,6 +1173,7 @@ void ParaEngine::ParaEngineSettings::LoadNameIndex()
 	m_name_to_index["Painter"] = 6;
 	m_name_to_index["BufferPicking"] = 7;
 	m_name_to_index["OverlayPicking"] = 8;
+	m_name_to_index["AsyncLoader"] = 9;
 }
 
 IAttributeFields* ParaEngine::ParaEngineSettings::GetChildAttributeObject(const std::string& sName)
@@ -1161,6 +1202,8 @@ IAttributeFields* ParaEngine::ParaEngineSettings::GetChildAttributeObject(int nR
 		return CGlobals::GetAssetManager()->LoadBufferPick("backbuffer");
 	else if (nRowIndex == 8)
 		return CGlobals::GetAssetManager()->LoadBufferPick("overlay");
+	else if (nRowIndex == 9)
+		return &(CAsyncLoader::GetSingleton());
 	else
 		return NULL;
 }
@@ -1198,7 +1241,7 @@ void ParaEngine::ParaEngineSettings::SetIcon(const char* sIconFile)
 #endif
 }
 
-void ParaEngine::ParaEngineSettings::SetLockWindowSize(bool bEnabled)
+void ParaEngine::ParaEngineSettings::SetShowWindowTitleBar(bool bEnabled)
 {
 #ifdef WIN32
 	if (CGlobals::GetApp()->IsWindowedMode())
@@ -1206,15 +1249,27 @@ void ParaEngine::ParaEngineSettings::SetLockWindowSize(bool bEnabled)
 		LONG dwAttr = GetWindowLong(CGlobals::GetAppHWND(), GWL_STYLE);
 		if (bEnabled)
 		{
-			dwAttr &= (~(WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZE | WS_MAXIMIZEBOX));
+			dwAttr |= (WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZE | WS_MAXIMIZEBOX);
 		}
 		else
 		{
-			dwAttr |= (WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZE | WS_MAXIMIZEBOX);
+			dwAttr &= (~(WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZE | WS_MAXIMIZEBOX));
 		}
 		SetWindowLong(CGlobals::GetAppHWND(), GWL_STYLE, dwAttr);
 	}
 #endif
+}
+
+bool ParaEngine::ParaEngineSettings::IsShowWindowTitleBar()
+{
+#ifdef WIN32
+	if (CGlobals::GetApp()->IsWindowedMode())
+	{
+		LONG dwAttr = GetWindowLong(CGlobals::GetAppHWND(), GWL_STYLE);
+		return (dwAttr & WS_CAPTION) != 0;
+	}
+#endif
+	return true;
 }
 
 const std::string& ParaEngine::ParaEngineSettings::GetMaxMacAddress()
@@ -1237,6 +1292,11 @@ int ParaEngine::ParaEngineSettings::GetCurrentMemoryUse()
 	return (int)ParaEngine::GetCurrentMemoryUse();
 }
 
+int ParaEngine::ParaEngineSettings::GetProcessId()
+{
+	return ParaEngine::GetProcessID();
+}
+
 size_t ParaEngine::ParaEngineSettings::GetVertexBufferPoolTotalBytes()
 {
 	return CGlobals::GetAssetManager()->GetVertexBufferPoolManager().GetVertexBufferPoolTotalBytes();
@@ -1250,6 +1310,15 @@ bool ParaEngine::ParaEngineSettings::HasClosingRequest()
 void ParaEngine::ParaEngineSettings::SetHasClosingRequest(bool val)
 {
 	CGlobals::GetApp()->SetHasClosingRequest(val);
+}
+
+intptr_t ParaEngine::ParaEngineSettings::GetAppHWND()
+{
+#if defined (PLATFORM_WINDOWS)
+	return (intptr_t)CGlobals::GetAppHWND();
+#else
+	return 0;
+#endif
 }
 
 void ParaEngineSettings::SetRefreshTimer(float fTimerInterval)
@@ -1339,11 +1408,15 @@ int ParaEngineSettings::InstallFields(CAttributeClass* pClass, bool bOverride)
 
 	pClass->AddField("OpenFileFolder", FieldType_String, (void*)SetDefaultOpenFileFolder_s, (void*)GetOpenFolder_s, CAttributeField::GetSimpleSchema(SCHEMA_DIALOG), NULL, bOverride);
 	pClass->AddField("Platform", FieldType_Int, NULL, (void*)GetPlatform_s, NULL, NULL, bOverride);
+	pClass->AddField("ProcessId", FieldType_Int, NULL, (void*)GetProcessId_s, NULL, NULL, bOverride);
 	pClass->AddField("IsMobilePlatform", FieldType_Bool, NULL, (void*)IsMobilePlatform_s, NULL, NULL, bOverride);
 	pClass->AddField("Is64BitsSystem", FieldType_Bool, NULL, (void*)Is64BitsSystem_s, NULL, NULL, bOverride);
 	pClass->AddField("RecreateRenderer", FieldType_void, (void*)RecreateRenderer_s, NULL, NULL, NULL, bOverride);
 	pClass->AddField("Icon", FieldType_String, (void*)SetIcon_s, (void*)0, NULL, NULL, bOverride);
 	pClass->AddField("LockWindowSize", FieldType_Bool, (void*)SetLockWindowSize_s, NULL, NULL, NULL, bOverride);
+	pClass->AddField("ShowWindowTitleBar", FieldType_Bool, (void*)SetShowWindowTitleBar_s, (void*)IsShowWindowTitleBar_s, NULL, NULL, bOverride);
+	pClass->AddField("WritablePath", FieldType_String, (void*)SetWritablePath_s, (void*)GetWritablePath_s, NULL, NULL, bOverride);
+	pClass->AddField("SandboxMode", FieldType_Bool, (void*)SetSandboxMode_s, (void*)IsSandboxMode_s, NULL, NULL, bOverride);
 
 	pClass->AddField("FPS", FieldType_Float, NULL, (void*)GetFPS_s, NULL, NULL, bOverride);
 	pClass->AddField("TriangleCount", FieldType_Int, NULL, (void*)GetTriangleCount_s, NULL, NULL, bOverride);
@@ -1352,5 +1425,7 @@ int ParaEngineSettings::InstallFields(CAttributeClass* pClass, bool bOverride)
 	pClass->AddField("CurrentMemoryUse", FieldType_Int, NULL, (void*)GetCurrentMemoryUse_s, NULL, NULL, bOverride);
 	pClass->AddField("PeakMemoryUse", FieldType_Int, NULL, (void*)GetPeakMemoryUse_s, NULL, NULL, bOverride);
 	pClass->AddField("VertexBufferPoolTotalBytes", FieldType_Int, NULL, (void*)GetVertexBufferPoolTotalBytes_s, NULL, NULL, bOverride);
+
+	pClass->AddField("AppHWND", FieldType_Double, NULL, (void*)GetAppHWND_s, NULL, NULL, bOverride);
 	return S_OK;
 }

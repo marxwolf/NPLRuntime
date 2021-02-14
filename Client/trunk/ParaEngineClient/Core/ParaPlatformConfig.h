@@ -72,15 +72,19 @@
 // check user set platform
 #if ! PARA_TARGET_PLATFORM
 #error  "Cannot recognize the target platform; are you targeting an unsupported platform?"
-#endif 
+#endif
 
 // choose renderer
+#if !defined(USE_DIRECTX_RENDERER) && !defined(USE_OPENGL_RENDERER) && !defined(USE_NULL_RENDERER)
 #if defined(PARAENGINE_MOBILE)
 #define USE_OPENGL_RENDERER
 #elif (PARA_TARGET_PLATFORM == PARA_PLATFORM_WIN32) && defined(PARAENGINE_CLIENT)
 #define USE_DIRECTX_RENDERER
+#elif (PARA_TARGET_PLATFORM == PARA_PLATFORM_MAC) && defined(MAC_CLIENT)
+#define USE_OPENGL_RENDERER
 #else
 #define USE_NULL_RENDERER
+#endif
 #endif
 
 #ifndef WIN32
@@ -95,6 +99,4 @@
 #if defined(WIN32) && !defined(_WIN64) && !defined(PARAENGINE_MOBILE) && defined(PARAENGINE_CLIENT)  && !defined(NPLRUNTIME)
 /** whether we should support build-in adobe flash player dll via activeX control. */
 #define USE_FLASH_MANAGER
-/** whether to compile with freeimage.dll support, mostly for loading PNG files */
-#define USE_FREEIMAGE
 #endif

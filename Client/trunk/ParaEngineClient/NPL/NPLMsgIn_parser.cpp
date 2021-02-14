@@ -35,7 +35,11 @@ namespace NPL
 			}
 			else
 			{
-				// allowing char [0-255] as method name characters, escaping only \r\n and ' '.  
+				// allowing only ansi char and 0xff as method name
+				if (((byte)input) != 0xff && (input == '\0' || !is_char(input))) {
+					// if the first byte is "\0" or non char we will switch to custom protocol by returning false.
+					return c_res_false;
+				}
 				state_ = method;
 				req.reset();
 				req.method.push_back(input);
@@ -337,7 +341,7 @@ namespace NPL
 
 	bool NPLMsgIn_parser::is_ctl(int c)
 	{
-		return c >= 0 && c <= 31 || c == 127;
+		return (c >= 0 && c <= 31) || c == 127;
 	}
 
 	bool NPLMsgIn_parser::is_tspecial(int c)

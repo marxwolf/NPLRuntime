@@ -10,8 +10,8 @@
 #include "EffectManager.h"
 #include "OceanManager.h"
 #include "ParaVertexBufferPool.h"
-#ifdef USE_DIRECTX_RENDERER
 #include "ShadowMap.h"
+#ifdef USE_DIRECTX_RENDERER
 #include "DirectXEngine.h"
 #endif
 #include "SunLight.h"
@@ -28,6 +28,7 @@
 #include "BlockLightGridClient.h"
 #include "ParaEngineSettings.h"
 #include "ViewportManager.h"
+#include "LightObject.h"
 #include "NPLHelper.h"
 #include "util/os_calls.h"
 #include "ChunkVertexBuilderManager.h"
@@ -77,7 +78,7 @@ namespace ParaEngine
 	//////////////////////////////////////////////////////////////////////////
 	BlockWorldClient::BlockWorldClient()
 		:m_maxSelectBlockPerBatch(80), m_isUnderLiquid(false), m_vBlockLightColor(DEFAULT_BLOCK_LIGHT_COLOR), 
-		m_nBufferRebuildCountThisTick(0), 
+		m_nBufferRebuildCountThisTick(0), m_bUsePointTextureFiltering(true),
 		m_nVertexBufferSizeLimit(100 * 1024 * 1024), 
 		m_nMaxVisibleVertexBufferBytes(100 * 1024 * 1024),
 		m_nAlwaysInVertexBufferChunkRadius(2),
@@ -674,6 +675,10 @@ namespace ParaEngine
 					pEffect->EndPass();
 				}
 				CGlobals::GetEffectManager()->applyFogParameters();
+				if (CGlobals::GetEffectManager()->IsUsingShadowMap())
+					CGlobals::GetEffectManager()->GetShadowMap()->SetShadowTexture(*pEffect, 1);
+				else
+					CGlobals::GetEffectManager()->GetShadowMap()->UnsetShadowTexture(1);
 #endif
 				
 
@@ -848,6 +853,12 @@ namespace ParaEngine
 						ParaMatrixMultiply(&mWorldView, &vWorldMatrix, &matViewProj);
 						pEffect->setMatrix(CEffectFile::k_worldViewMatrix, &mWorldView);
 					}
+					if (CGlobals::GetEffectManager()->IsUsingShadowMap() && pEffect->isMatrixUsed(CEffectFile::k_TexWorldViewProjMatrix))
+					{
+						Matrix4 mTex;
+						ParaMatrixMultiply(&mTex, &vWorldMatrix, CGlobals::GetEffectManager()->GetTexViewProjMatrix());
+						pEffect->setMatrix(CEffectFile::k_TexWorldViewProjMatrix, &mTex);
+					}
 					{
 						// set the new render origin
 						Vector4 vWorldPos(0,0,0,1.f);
@@ -903,7 +914,7 @@ namespace ParaEngine
 		}
 	}
 
-	void BlockWorldClient::RenderWireFrameBlock(int nSelectionIndex, float fScaling,  LinearColor* pLineColor)
+	void BlockWorldClient::RenderWireFrameBlock(int nSelectionIndex, float fScaling, LinearColor* pLineColor)
 	{
 		auto& selectedBlocks = m_selectedBlockMap[nSelectionIndex];
 		auto& selectedBlockMap = selectedBlocks.m_blocks;
@@ -2132,6 +2143,16 @@ namespace ParaEngine
 		return (v0->GetRenderOrder() < v1->GetRenderOrder());
 	}
 
+	bool BlockWorldClient::GetUsePointTextureFiltering()
+	{
+		return m_bUsePointTextureFiltering;
+	}
+
+	void BlockWorldClient::SetUsePointTextureFiltering(bool bUse)
+	{
+		m_bUsePointTextureFiltering = bUse;
+	}
+
 	void BlockWorldClient::InitDeviceObjects()
 	{
 
@@ -2574,6 +2595,7 @@ namespace ParaEngine
 		if ((m_minActiveChunkId_ws.z + m_activeChunkDim) < endIdx.z)
 			endIdx.z = m_minActiveChunkId_ws.z + m_activeChunkDim;
 
+		//float fRenderDist = (std::max)(GetRenderDist(), 16) * BlockConfig::g_blockSize;
 		float fRenderDist = GetRenderDist() * BlockConfig::g_blockSize;
 		CShapeSphere sEyeSphere(camWorldPos, fRenderDist);
 
@@ -2586,7 +2608,7 @@ namespace ParaEngine
 		int32 chunkX = GetEyeChunkId().x;
 		int32 chunkY = GetEyeChunkId().y;
 		int32 chunkZ = GetEyeChunkId().z;
-		int32 chunkViewRadius = (int32)(GetRenderDist() / 16);
+		int32 chunkViewRadius = (std::max)((int)(GetRenderDist() / 16), 1);
 		int32 chunkViewSize = chunkViewRadius * 2;
 		
 		Vector3 vChunkSize(BlockConfig::g_chunkSize, BlockConfig::g_chunkSize, BlockConfig::g_chunkSize);
@@ -3090,6 +3112,74 @@ namespace ParaEngine
 		return m_pMultiFrameRenderer->DrawToSkybox();
 	}
 
+
+	void BlockWorldClient::RenderDeferredLights()
+	{
+#ifdef USE_DIRECTX_RENDERER
+		SceneState* sceneState = CGlobals::GetSceneState();
+		if (!sceneState->IsDeferredShading() || sceneState->listDeferredLightObjects.empty())
+			return;
+
+		// sort by light type
+		std::sort(sceneState->listDeferredLightObjects.begin(), sceneState->listDeferredLightObjects.end(), [](CLightObject* a, CLightObject* b){
+			return (a->GetLightType() < b->GetLightType());
+		});
+
+		// setup shader here
+		for (int i = 0; i < 3; i++)
+		{
+			if (m_lightgeometry_effects[i] == 0)
+			{
+				if (i == 0)
+					m_lightgeometry_effects[i] = CGlobals::GetAssetManager()->LoadEffectFile("blockFancy", "script/apps/Aries/Creator/Game/Shaders/DeferredShadingPointLighting.fxo");
+				else if (i == 2)
+					m_lightgeometry_effects[i] = CGlobals::GetAssetManager()->LoadEffectFile("blockFancy", "script/apps/Aries/Creator/Game/Shaders/DeferredShadingSpotLighting.fxo");
+				else 
+					m_lightgeometry_effects[i] = CGlobals::GetAssetManager()->LoadEffectFile("blockFancy", "script/apps/Aries/Creator/Game/Shaders/DeferredShadingDirectionalLighting.fxo");
+				
+				m_lightgeometry_effects[i]->LoadAsset();
+			}
+			if (!m_lightgeometry_effects[i] || ! m_lightgeometry_effects[i]->IsValid())
+				return;
+		}
+
+		// TODO: setup render target here
+		{
+
+
+		}
+
+		// sort by type and render light geometry
+		int nLastType = -1;
+
+		CGlobals::GetEffectManager()->EndEffect();
+		CEffectFile* pEffectFile = NULL;
+		for (CLightObject* lightObject : sceneState->listDeferredLightObjects)
+		{
+			if (lightObject->GetLightType() != nLastType)
+			{
+				if (pEffectFile) 
+				{
+					pEffectFile->end();
+				}
+				else 
+				{
+					// first time, we will switch to declaration
+					auto pDecl = CGlobals::GetEffectManager()->GetVertexDeclaration(EffectManager::S0_POS);
+					if (pDecl)
+						CGlobals::GetRenderDevice()->SetVertexDeclaration(pDecl);
+				}
+				pEffectFile = m_lightgeometry_effects[lightObject->GetLightType() - 1].get();
+				pEffectFile->begin();
+			}
+			lightObject->RenderDeferredLightMesh(sceneState);
+		}
+		if (pEffectFile) {
+			pEffectFile->end();
+		}
+#endif
+	}
+
 	int BlockWorldClient::InstallFields(CAttributeClass* pClass, bool bOverride)
 	{
 		// install parent fields if there are any. Please replace CBlockWorld with your parent class name.
@@ -3114,7 +3204,7 @@ namespace ParaEngine
 		pClass->AddField("NearCameraChunkDist", FieldType_Int, (void*)SetNearCameraChunkDist_s, (void*)GetNearCameraChunkDist_s, NULL, NULL, bOverride);
 		pClass->AddField("MaxBufferRebuildPerTick", FieldType_Int, (void*)SetMaxBufferRebuildPerTick_s, (void*)GetMaxBufferRebuildPerTick_s, NULL, NULL, bOverride);
 		pClass->AddField("MaxBufferRebuildPerTick_FarChunk", FieldType_Int, (void*)SetMaxBufferRebuildPerTick_FarChunk_s, (void*)GetMaxBufferRebuildPerTick_FarChunk_s, NULL, NULL, bOverride);
-		
+		pClass->AddField("UsePointTextureFiltering", FieldType_Bool, (void*)SetUsePointTextureFiltering_s, (void*)GetUsePointTextureFiltering_s, NULL, NULL, bOverride);
 		return S_OK;
 	}
 

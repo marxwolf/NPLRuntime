@@ -9,6 +9,14 @@
 #include "FileSearchResult.h"
 #include "ParaFile.h"
 
+#if defined(PARAENGINE_MOBILE)
+	#define USE_COCOS_FILE_API
+#else
+	#if !defined(WIN32) || !defined(PARAENGINE_CLIENT) //  || defined(_DEBUG)
+		#define USE_BOOST_FILE_API
+	#endif
+#endif
+
 namespace ParaEngine
 {
 	using namespace std;
@@ -57,6 +65,9 @@ namespace ParaEngine
 		/** close an archive. When done with an archive, one should always close it. 
 		Too many opened archives will compromise the IO performances. */
 		PE_CORE_DECL void CloseArchive(const string&  path);
+
+		/** get archive by filename */
+		PE_CORE_DECL CArchive* GetArchive(const string&  path);
 
 		/**
 		* load a file by name.

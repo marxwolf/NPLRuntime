@@ -12,6 +12,7 @@
 #include "ParaXModel/ParaXModel.h"
 #include "ParaXModel/particle.h"
 #include "ParaXModel/ParaXBone.h"
+#include "ParaXModel/XFileCharModelExporter.h"
 #include "ParaXSerializer.h"
 #ifdef USE_DIRECTX_RENDERER
 // for ParaEngine x file template registration
@@ -21,14 +22,19 @@
 /** define this to enable testing saving. See SaveParaXMesh() 
 * text encoding is enforced when the macro is on. */
 // #define TEST_NODE
-#elif defined(USE_OPENGL_RENDERER)
-#include "ParaXModel/XFileCharModelParser.h"
 #endif
+#include "ParaXModel/XFileCharModelParser.h"
 
 namespace ParaEngine
 {
 	extern float frand();
 	SerializerOptions CParaXSerializer::g_pDefaultOption;
+
+	void CParaXSerializer::ExportParaXMesh(const string& filePath, CParaXModel* pMesh)
+	{
+		XFileCharModelExporter::Export(filePath, pMesh);
+	}
+
 }
 
 using namespace ParaEngine;
@@ -72,13 +78,13 @@ CParaXSerializer::~CParaXSerializer(void)
 void* CParaXSerializer::LoadParaXMesh(CParaFile &f)
 {
 	void* pMesh=NULL;
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER) && !defined(_DEBUG)
 	ParaXParser p(f);
 	if(LoadParaX_Header(p)){
 		pMesh = LoadParaX_Body(p);
 		LoadParaX_Finalize(p);
 	}
-#elif defined(USE_OPENGL_RENDERER)
+#else
 	try
 	{
 		XFileCharModelParser p(f.getBuffer(), f.getSize());
@@ -88,7 +94,6 @@ void* CParaXSerializer::LoadParaXMesh(CParaFile &f)
 	{
 		OUTPUT_LOG("warn: LoadParaXMesh error:%s\n", e->what());
 	}
-	
 #endif
 	return pMesh;
 }
@@ -761,6 +766,7 @@ bool CParaXSerializer::ReadXAttachments(CParaXModel& xmesh, LPFileData pFileData
 		int nAttachments = *(DWORD*)(pBuffer);
 		int nAttachmentLookup = *(((DWORD*)(pBuffer))+1);
 		xmesh.m_objNum.nAttachments = nAttachments;
+		xmesh.m_objNum.nAttachLookup = nAttachmentLookup;
 		
 		ModelAttachmentDef *attachments = (ModelAttachmentDef *)(pBuffer+8);
 		int32 * attLookup = (int32 *)(pBuffer+8+sizeof(ModelAttachmentDef)*nAttachments);
@@ -1007,8 +1013,27 @@ bool CParaXSerializer::ReadXGeosets(CParaXModel& xmesh, LPFileData pFileData)
 			xmesh.showGeosets[i] = true;
 
 		xmesh.geosets.resize(nGeosets);
-		if(nGeosets>0)
-			memcpy(&xmesh.geosets[0],pGeosets, sizeof(ModelGeoset)*nGeosets);
+		if (nGeosets > 0) {
+			memcpy(&xmesh.geosets[0], pGeosets, sizeof(ModelGeoset)*nGeosets);
+			if (xmesh.CheckMinVersion(1, 0, 0, 1))
+			{
+				/* since Intel is little endian.
+				for (int i = 0; i < nGeosets; ++i)
+				{
+					ModelGeoset& geoset = xmesh.geosets[i];
+					geoset.SetVertexStart((DWORD)geoset.d3 + ((DWORD)(geoset.d4) << 16));
+				}*/
+			}
+			else
+			{
+				// disable vertex start for all parax file version before 1.0.0.1, since we only support uint16 indices. 
+				for (int i = 0; i < nGeosets; ++i)
+				{
+					xmesh.geosets[i].SetVertexStart(0);
+				}
+			}
+		}
+			
 	}
 	else
 		return false;
@@ -1131,7 +1156,6 @@ bool CParaXSerializer::ReadXBones(CParaXModel& xmesh, LPFileData pFileData)
 				Bone& bone = xmesh.bones[i];
 				const ModelBoneDef&b = mb[i];
 				bone.parent = b.parent;
-				bone.pivot = b.pivot;
 				bone.flags = b.flags;
 				bone.nIndex = i;
 				
@@ -1140,11 +1164,33 @@ bool CParaXSerializer::ReadXBones(CParaXModel& xmesh, LPFileData pFileData)
 					xmesh.m_boneLookup[b.boneid] = i;
 					bone.nBoneID = b.boneid;
 				}
+				if ((bone.flags & 0x80000000) != 0)
+				{
+					bone.flags = bone.flags & (~0x80000000);
+					if (b.nOffsetPivot != 0)
+						bone.SetName((const char*)GetRawData(b.nBoneName));
+
+					if (bone.IsOffsetMatrixBone()) {
+						bone.matOffset = *((const Matrix4*)GetRawData(b.nOffsetMatrix));
+						bone.bUsePivot = false;
+					}
+
+					bone.pivot = *((const Vector3*)GetRawData(b.nOffsetPivot));
+					if (bone.IsStaticTransform())
+						bone.matTransform = *((const Matrix4*)GetRawData(b.ofsStaticMatrix));
+				}
+				else
+				{
+					bone.pivot = b.pivot;
+				}
 				
-				ReadAnimationBlock(&b.translation, bone.trans, xmesh.globalSequences);
-				ReadAnimationBlock(&b.rotation, bone.rot, xmesh.globalSequences);
-				ReadAnimationBlock(&b.scaling, bone.scale, xmesh.globalSequences);
-				bone.RemoveRedundentKeys();
+				if (!bone.IsStaticTransform())
+				{
+					ReadAnimationBlock(&b.translation, bone.trans, xmesh.globalSequences);
+					ReadAnimationBlock(&b.rotation, bone.rot, xmesh.globalSequences);
+					ReadAnimationBlock(&b.scaling, bone.scale, xmesh.globalSequences);
+					bone.RemoveRedundentKeys();
+				}
 			}
 		}
 	}
@@ -1653,7 +1699,7 @@ void* CParaXSerializer::LoadParaX_Body(ParaXParser& Parser)
 		if(Parser.m_pParaXRawData && SUCCEEDED(Parser.m_pParaXRawData->Lock(&dwSize, (LPCVOID*)(&pBuffer))))
 			m_pRaw = pBuffer+4;
 
-		if(Parser.m_xheader.type == PARAX_MODEL_ANIMATED)
+		if(Parser.m_xheader.type == PARAX_MODEL_ANIMATED || Parser.m_xheader.type == PARAX_MODEL_BMAX)
 		{
 			pMesh = new CParaXModel(Parser.m_xheader);
 			

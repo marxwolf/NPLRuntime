@@ -1,6 +1,6 @@
 # Author: LiXizhi
 # Company: ParaEngine.com
-# Date: 2009.4.5
+# Date: 2009.4.5, this is actually lua 5.1.5 patched with coco(coroutine)
 # Note: download lua src, 
 # O edit luaconf.h. and edit luaconf.h as below:
 # #define LUA_IDSIZE	120
@@ -16,8 +16,8 @@ src/lapi.c       src/lauxlib.c    src/lbaselib.c   src/lcode.c      src/ldblib.c
 src/ldo.c        src/ldump.c      src/lfunc.c      src/lgc.c        src/linit.c      src/liolib.c
 src/llex.c       src/lmathlib.c   src/lmem.c       src/loadlib.c    src/lobject.c    src/lopcodes.c
 src/loslib.c     src/lparser.c    src/lstate.c     src/lstring.c    src/lstrlib.c    src/ltable.c
-src/ltablib.c    src/ltm.c        src/lundump.c    src/lvm.c
-src/lzio.c       src/print.c
+src/ltablib.c    src/ltm.c        src/lundump.c    src/lvm.c 
+src/lzio.c       src/print.c	  src/lcoco.c
 
 # src/luac.c src/lua.c
 # Note: added by LiXizhi 2010.3.15, which is exported from src/luac.c
@@ -26,7 +26,7 @@ src/lzio.c       src/print.c
 src/lapi.h       src/lauxlib.h    src/lcode.h      src/ldebug.h     src/ldo.h        src/lfunc.h
 src/lgc.h        src/llex.h       src/llimits.h    src/lmem.h       src/lobject.h    src/lopcodes.h
 src/lparser.h    src/lstate.h     src/lstring.h    src/ltable.h     src/ltm.h        src/lua.h
-src/luaconf.h    src/lualib.h     src/lundump.h    src/lvm.h        src/lzio.h
+src/luaconf.h    src/lualib.h     src/lundump.h    src/lvm.h        src/lzio.h       src/lcoco.h
 )
 
 IF(MSVC)
@@ -45,10 +45,19 @@ IF(MSVC)
 	SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
 ENDIF()
 
+
+if(LUA_STATICLIB)
+	SET(LUA_LIB_MODE "STATIC")
+else()
+	SET(LUA_LIB_MODE "SHARED")
+endif()
+
 # the following will build lua as dll, the reason for this, is that we need its pdb files for debugging using decoda (a lua debugger). 
 # plus it also makes core game engine update more granular. 
 IF(WIN32)
-	add_definitions(-DLUA_BUILD_AS_DLL)
+	if(NOT NPLRUNTIME_STATIC_LIB)
+		add_definitions(-DLUA_BUILD_AS_DLL)
+	endif()
 	SET(CMAKE_DEBUG_POSTFIX "_d")
 	
 	# generate program database (PDB symbol files even in release build)
@@ -59,17 +68,25 @@ IF(WIN32)
 	# add a stripped version of symbol files during release build
 	SET(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /PDBSTRIPPED:Release/lua.stripped.pdb")
 	
-	ADD_LIBRARY(lua SHARED ${lua_SRCS})
+	ADD_LIBRARY(lua ${LUA_LIB_MODE} ${lua_SRCS})
+
+	if(NOT NPLRUNTIME_STATIC_LIB)
+		SET(output_luafilename "lua51.dll")
+	endif()
 ELSE(WIN32)
 	add_definitions(-DLUA_USE_LINUX)
-	ADD_LIBRARY(lua SHARED ${lua_SRCS})
+	ADD_LIBRARY(lua ${LUA_LIB_MODE} ${lua_SRCS})
+
+	SET(output_luafilename "liblua51.so")
 ENDIF(WIN32)
 
-# ADD_CUSTOM_COMMAND(
-# 	TARGET lua
-# 	POST_BUILD
-# 	COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_BIN_DIR}
-# 	COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:lua> ${OUTPUT_BIN_DIR}
-# )
+# SET_TARGET_PROPERTIES(lua PROPERTIES OUTPUT_NAME "lua51")
+
+ ADD_CUSTOM_COMMAND(
+ 	TARGET lua
+ 	POST_BUILD
+ 	COMMAND ${CMAKE_COMMAND} -E make_directory ${OUTPUT_BIN_DIR}
+ 	COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:lua> ${OUTPUT_BIN_DIR}/${output_luafilename}
+)
 
 

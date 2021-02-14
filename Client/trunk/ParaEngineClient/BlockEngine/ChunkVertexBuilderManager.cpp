@@ -10,6 +10,7 @@ ProcessOneChunk() is most time consuming. takes 20-30ms per chunk (typically 300
 */
 //-----------------------------------------------------------------------------
 #include "ParaEngine.h"
+#include "util/CSingleton.h"
 #include "RenderableChunk.h"
 #include "BlockWorld.h"
 #include "ParaTime.h"
@@ -22,7 +23,7 @@ using namespace ParaEngine;
 
 ParaEngine::ChunkVertexBuilderManager::ChunkVertexBuilderManager()
 	:m_nMaxPendingChunks(4), m_nMaxUploadingChunks(4), m_bChunkThreadStarted(false),
-	m_nMaxChunksToUploadPerTick(8), m_nMaxBytesToUploadPerTick(4*1024*1024)
+	m_nMaxChunksToUploadPerTick(8), m_nMaxBytesToUploadPerTick(4*1024*1024), m_pBlockWorld(nullptr)
 {
 
 }
@@ -34,8 +35,7 @@ ParaEngine::ChunkVertexBuilderManager::~ChunkVertexBuilderManager()
 
 ChunkVertexBuilderManager& ParaEngine::ChunkVertexBuilderManager::GetInstance()
 {
-	static ChunkVertexBuilderManager s_singleton;
-	return s_singleton;
+	return *(CAppSingleton<ChunkVertexBuilderManager>::GetInstance());
 }
 
 bool ParaEngine::ChunkVertexBuilderManager::AddChunk(RenderableChunk* pChunk)
@@ -131,7 +131,7 @@ void ParaEngine::ChunkVertexBuilderManager::UploadPendingChunksToDevice()
 				int nPendingCount = m_pendingChunks.size();
 				bool bDiryBlockBlockChange = pChunk->IsDirtyByBlockChange();
 				if (!pChunk->IsDirty() && pChunk->GetChunkViewDistance()<3 && (nPendingCount > 0)
-					&& (int)m_pendingUploadChunks.size() < std::max((int)4, m_nMaxUploadingChunks) )
+					&& (int)m_pendingUploadChunks.size() < max((int)4, m_nMaxUploadingChunks) )
 				{
 					// we will handle a very special case here, where pending chunks are neighbors of the uploaded chunks.
 					// in such case, we will try to wait until neighbor chunks are also uploaded together 
@@ -289,11 +289,16 @@ void ParaEngine::ChunkVertexBuilderManager::ChunkBuildThreadProc()
 	{
 		if (ProcessOneChunk(lock_) == 0)
 		{
-			std::unique_lock<std::mutex> QueueLock_(m_mutex);
 			if (m_pendingChunks.empty())
 			{
 				lock_.unlock();
-				m_chunk_request_signal.wait(QueueLock_);
+				{
+					std::unique_lock<std::mutex> QueueLock_(m_queueMutex);
+					if (m_pendingChunks.empty())
+					{
+						m_chunk_request_signal.wait(QueueLock_);
+					}
+				}
 				lock_.lock();
 			}
 		}

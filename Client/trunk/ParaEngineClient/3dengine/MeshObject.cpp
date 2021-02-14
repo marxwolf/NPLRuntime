@@ -403,9 +403,8 @@ void CMeshObject::Reset()
 }
 
 
-Matrix4* CMeshObject::GetRenderWorldMatrix( Matrix4* mxWorld, int nRenderNumber)
+Matrix4* CMeshObject::GetRenderMatrix( Matrix4& mxWorld, int nRenderNumber)
 {
-	PE_ASSERT(mxWorld!=0);
 	// render offset
 	Vector3 vPos = GetRenderOffset();
 
@@ -424,19 +423,19 @@ Matrix4* CMeshObject::GetRenderWorldMatrix( Matrix4* mxWorld, int nRenderNumber)
 	}
 	if(fFacing != 0.f)
 	{
-		ParaMatrixRotationY(mxWorld, fFacing);/** set facing and rotate local matrix round y axis*/
-		*mxWorld = m_mxLocalTransform*(*mxWorld);
+		ParaMatrixRotationY(&mxWorld, fFacing);/** set facing and rotate local matrix round y axis*/
+		mxWorld = m_mxLocalTransform*mxWorld;
 	}
 	else
 	{
-		*mxWorld = m_mxLocalTransform;
+		mxWorld = m_mxLocalTransform;
 	}
 
 	// world translation
-	mxWorld->_41 += vPos.x;
-	mxWorld->_42 += vPos.y;
-	mxWorld->_43 += vPos.z;
-	return mxWorld;
+	mxWorld._41 += vPos.x;
+	mxWorld._42 += vPos.y;
+	mxWorld._43 += vPos.z;
+	return &mxWorld;
 }
 
 HRESULT CMeshObject::DrawInner( SceneState * sceneState, const Matrix4* pMxWorld, float fCameraToObjectDist, CParameterBlock* materialParams)
@@ -459,8 +458,8 @@ HRESULT CMeshObject::DrawInner( SceneState * sceneState, const Matrix4* pMxWorld
 		return E_FAIL;
 	}
 
-	int nIndex = m_ppMesh->GetLodIndex(fCameraToObjectDist);
-	CParaXStaticModelRawPtr pMesh = m_ppMesh->GetMesh(nIndex);
+	int nIndex = (sceneState && sceneState->IsLODEnabled()) ? m_ppMesh->GetLodIndex(fCameraToObjectDist) : 0;
+	auto pMesh = m_ppMesh->GetMesh(nIndex);
 
 	if(pMesh == NULL)
 		return E_FAIL;
@@ -484,9 +483,11 @@ HRESULT CMeshObject::DrawInner( SceneState * sceneState, const Matrix4* pMxWorld
 	}
 
 	/// set whether to use the material(texture) in the mesh file
-	pMesh->m_bUseMaterials = true;
+	pMesh->UseMeshMaterials(true);
 	bool bIsRendered = false;
 	CGlobals::GetEffectManager()->applyObjectLocalLighting(this);
+
+	CApplyObjectLevelParamBlock p(materialParams);
 
 	if(GetSelectGroupIndex() >= 0 && !sceneState->IsShadowPass())
 	{
@@ -545,8 +546,11 @@ HRESULT CMeshObject::DrawInner( SceneState * sceneState, const Matrix4* pMxWorld
 					if (pBlockWorldClient && pBlockWorldClient->IsInBlockWorld())
 					{
 						// Note: do this if one wants point light
-						CGlobals::GetEffectManager()->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
-						CGlobals::GetEffectManager()->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+						if (pBlockWorldClient->GetUsePointTextureFiltering())
+						{
+							CGlobals::GetEffectManager()->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+							CGlobals::GetEffectManager()->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+						}
 					}
 				}
 			}
@@ -569,8 +573,11 @@ HRESULT CMeshObject::DrawInner( SceneState * sceneState, const Matrix4* pMxWorld
 						if (pBlockWorldClient && pBlockWorldClient->IsInBlockWorld())
 						{
 							// Note: do this if one wants point light
-							CGlobals::GetEffectManager()->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
-							CGlobals::GetEffectManager()->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+							if (pBlockWorldClient->GetUsePointTextureFiltering())
+							{
+								CGlobals::GetEffectManager()->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+								CGlobals::GetEffectManager()->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
+							}
 						}
 					}
 
@@ -772,8 +779,12 @@ HRESULT CMeshObject::Draw( SceneState * sceneState)
 	SetFrameNumber(sceneState->m_nRenderCount);
 
 	EffectManager* pEffectManager = CGlobals::GetEffectManager();
+
+	bool bUsePointTextureFilter = false;
+
+	CApplyObjectLevelParamBlock p(GetEffectParamBlock());
 	// apply block space lighting for object whose size is comparable to a single block size
-	if ((CheckAttribute(MESH_USE_LIGHT) || sceneState->IsDeferredShading()) && !(sceneState->IsShadowPass()))
+	if (CheckAttribute(MESH_USE_LIGHT) && !(sceneState->IsShadowPass()))
 	{
 		BlockWorldClient* pBlockWorldClient = BlockWorldClient::GetInstance();
 		if(pBlockWorldClient && pBlockWorldClient->IsInBlockWorld())
@@ -799,10 +810,14 @@ HRESULT CMeshObject::Draw( SceneState * sceneState)
 			
 			sceneState->EnableLocalMaterial(true);
 			
-			// Note: do this if one wants point light
-			pEffectManager->SetSamplerState( 0, D3DSAMP_MINFILTER,  D3DTEXF_POINT);
-			pEffectManager->SetSamplerState( 0, D3DSAMP_MAGFILTER,  D3DTEXF_POINT);
+			bUsePointTextureFilter = bUsePointTextureFilter || pBlockWorldClient->GetUsePointTextureFiltering();
 		}
+	}
+	
+	if (bUsePointTextureFilter)
+	{
+		pEffectManager->SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT);
+		pEffectManager->SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT);
 	}
 	else
 	{
@@ -812,9 +827,9 @@ HRESULT CMeshObject::Draw( SceneState * sceneState)
 
 	// get world transform matrix
 	Matrix4 mxWorld;
-	GetRenderWorldMatrix(&mxWorld);
+	GetRenderMatrix(mxWorld);
 
-	DrawInner(sceneState, &mxWorld, sceneState->GetCameraToCurObjectDistance());
+	DrawInner(sceneState, &mxWorld, sceneState->GetCameraToCurObjectDistance(), p.GetParamsBlock());
 
 	sceneState->EnableLocalMaterial(false);
 
@@ -1032,7 +1047,7 @@ Vector3 ParaEngine::CMeshObject::GetXRefScriptPosition(int nIndex)
 					{
 						// get the parent's rotation and scaling matrix, here it is some trick to reuse the parent node's code. we actually get its world matrix and then remove the translation part.
 						Matrix4 mat;
-						GetRenderWorldMatrix(&mat);
+						GetRenderMatrix(mat);
 						mat = pXRef->m_data.localTransform*mat;
 
 						Vector3 vOut;
@@ -1065,7 +1080,7 @@ Vector3 ParaEngine::CMeshObject::GetXRefScriptScaling(int nIndex)
 					{
 						// get the parent's rotation and scaling matrix, here it is some trick to reuse the parent node's code. we actually get its world matrix and then remove the translation part.
 						Matrix4 mat;
-						GetRenderWorldMatrix(&mat);
+						GetRenderMatrix(mat);
 						Vector3 vPos = GetRenderOffset();// get render offset
 						mat._41 -= vPos.x;
 						mat._42 -= vPos.y;
@@ -1106,7 +1121,7 @@ float ParaEngine::CMeshObject::GetXRefScriptFacing(int nIndex)
 					{
 						// get the parent's rotation and scaling matrix, here it is some trick to reuse the parent node's code. we actually get its world matrix and then remove the translation part.
 						Matrix4 mat;
-						GetRenderWorldMatrix(&mat);
+						GetRenderMatrix(mat);
 						Vector3 vPos = GetRenderOffset();// get render offset
 						mat._41 -= vPos.x;
 						mat._42 -= vPos.y;
@@ -1158,7 +1173,7 @@ const char* CMeshObject::GetXRefScriptLocalMatrix( int nIndex )
 					{
 						// get the parent's rotation and scaling matrix, here it is some trick to reuse the parent node's code. we actually get its world matrix and then remove the translation part.
 						Matrix4 mat;
-						GetRenderWorldMatrix(&mat);
+						GetRenderMatrix(mat);
 						Vector3 vPos = GetRenderOffset();// get render offset
 						mat._41 -= vPos.x;
 						mat._42 -= vPos.y;
@@ -1183,7 +1198,7 @@ int CMeshObject::GetNumReplaceableTextures()
 {
 	if(m_ppMesh==0 || ! (m_ppMesh->IsValid()))
 		return 0;
-	CParaXStaticModelRawPtr pMesh = m_ppMesh->GetMesh();
+	auto pMesh = m_ppMesh->GetMesh();
 	if(pMesh == NULL)
 		return 0;
 
@@ -1194,7 +1209,7 @@ TextureEntity* CMeshObject::GetDefaultReplaceableTexture( int ReplaceableTexture
 {
 	if(m_ppMesh==0 || ! (m_ppMesh->IsValid()))
 		return 0;
-	CParaXStaticModelRawPtr pMesh = m_ppMesh->GetMesh();
+	auto pMesh = m_ppMesh->GetMesh();
 	if(pMesh == NULL)
 		return 0;
 
@@ -1205,7 +1220,7 @@ TextureEntity* CMeshObject::GetReplaceableTexture( int ReplaceableTextureID )
 {
 	if(m_ppMesh==0 || ! (m_ppMesh->IsValid()))
 		return 0;
-	CParaXStaticModelRawPtr pMesh = m_ppMesh->GetMesh();
+	auto pMesh = m_ppMesh->GetMesh();
 	if(pMesh == NULL)
 		return 0;
 	if(pMesh->GetReplaceableTexture(ReplaceableTextureID))

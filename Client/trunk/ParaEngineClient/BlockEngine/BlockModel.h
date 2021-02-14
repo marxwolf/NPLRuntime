@@ -167,6 +167,8 @@ namespace ParaEngine
 		Vector2 texcoord;
 	};
 
+
+
 	class BlockModel
 	{
 	public:
@@ -306,6 +308,7 @@ namespace ParaEngine
 		/** load static model from parax file. */
 		void LoadModel(BlockTemplate* pTemplate, const std::string& filename, const Matrix4& mat, int nTextureIndex = 0);
 		void LoadModelByTexture(int32_t texFaceNum);
+		void LoadCubeModel();
 		/** load from known model name */
 		void LoadModel(const std::string& sModelName);
 		/** set the vertex in shadow as in ao calculation. 
@@ -319,6 +322,7 @@ namespace ParaEngine
 		unsigned char CalculateCubeVertexAOShadowLevel(int nIndex, uint32 aoFlags);
 
 		void SetVertexHeightScale(int nIndex, float scale);
+
 		//
 		//    LT  -----  RT
 		//       |     |

@@ -5,6 +5,8 @@
 #include "NPLMsgOut.h"
 #include "NPLMsgIn_parser.h"
 #include "NPLMessageQueue.h"
+#include "WebSocket/WebSocketReader.h"
+#include "WebSocket/WebSocketWriter.h"
 
 #include <boost/asio.hpp>
 #include <boost/array.hpp>
@@ -30,6 +32,12 @@ namespace NPL
 		private boost::noncopyable
 	{
 	public:
+		enum ProtocolType
+		{
+			NPL = 0,
+			WEBSOCKET = 1,
+			TCP_CUSTOM = 2, // any custom protocol, like google protocol buffer
+		};
 		friend class CNPLDispatcher;
 		typedef concurrent_ptr_queue<NPLMsgOut_ptr, dummy_condition_variable> RingBuffer_Type;
 		typedef std::map<std::string, int>	StringMap_Type;
@@ -50,10 +58,13 @@ namespace NPL
 		/** Stop all asynchronous operations associated with the connection. 
 		* @param bRemoveConnection: if true(default), connection will be immediately removed from CNPLConnectionManager
 		*  if false, one need to manually remove it from the CNPLConnectionManager
-		* @param nReason: 0 is normal disconnect. 1 is another user with same nid is authenticated. The server should 
-		* send a message to tell the client about this. 
+		* @param nReason: 0 is normal disconnect(it will abort pending read/write). 1 is another user with same nid is authenticated. The server should 
+		* send a message to tell the client about this. -1 means close the connection when all pending data has been sent. 
 		*/
 		void stop(bool bRemoveConnection = true, int nReason = 0);
+
+		/** close/stop the connection when all data has been sent */
+		void CloseAfterSend();
 
 		/** connect to the remote NPL runtime address. this function returns immediately. It will resolve host and then calls start().
 		*/
@@ -208,6 +219,15 @@ namespace NPL
 		* @return 1 if not timed out. 0 if timed out,the caller should close the connection. -1 if timed out and keep alive is sent.  
 		*/
 		int CheckIdleTimeout(unsigned int nCurTime);
+
+		/** whether there is unsent data. */
+		bool HasUnsentData();
+
+		/** get global log level.*/
+		int GetLogLevel();
+
+		/** set transmission protocol, default value is 0. */
+		void SetProtocol(ProtocolType protocolType = ProtocolType::NPL);
 	public:
 		//
 		// In case, one wants to use a different connection data handler,  the following interface are provided. 
@@ -239,6 +259,10 @@ namespace NPL
 		virtual bool handleMessageIn();
 
 	private:
+		/// try to parse websocket protocol
+		bool handle_websocket_data(int bytes_transferred);
+		/// try to parse TCP_CUSTOM protocol
+		bool handle_tcp_custom_data(int bytes_transferred);
 		//
 		// boost io service call backs. 
 		//
@@ -297,9 +321,9 @@ namespace NPL
 		StringMap_Type m_filename_id_map;
 
 		/// for statistics, number of bytes received
-		int m_totalBytesIn;
+		uint32 m_totalBytesIn;
 		/// for statistics, number of bytes sent
-		int m_totalBytesOut;
+		uint32 m_totalBytesOut;
 		
 		/** default to false, if true, it will dump all send and received data to output. */
 		bool m_bDebugConnection;
@@ -310,12 +334,12 @@ namespace NPL
 		* and speed and is equivalent to level 6. Level 0 actually does no compression at all, and in fact expands the data slightly 
 		* to produce the zlib format (it is not a byte-for-byte copy of the input). 
 		*/
-		int m_nCompressionLevel;
+		int32 m_nCompressionLevel;
 
 		/** when the message size is bigger than this number of bytes, we will use m_nCompressionLevel for compression. 
 		* For message smaller than the threshold, we will not compress even m_nCompressionLevel is not 0. 
 		*/
-		int m_nCompressionThreshold;
+		int32 m_nCompressionThreshold;
 
 		/** whether SO_KEEPALIVE is enabled.*/
 		bool m_bKeepAlive;
@@ -323,14 +347,32 @@ namespace NPL
 		/** whether idle timeout is enabled. */
 		bool m_bEnableIdleTimeout;
 
+		/** number of async_send calls */
+		uint32 m_nSendCount;
+		/** number of finished async_send calls. if m_nSendCount == m_nFinishedCount, it means that all messages are sent */
+		uint32 m_nFinishedCount;
+
+		/** close connection when all data is sent*/
+		bool m_bCloseAfterSend;
+
 		/** how many milliseconds to assume time out, default to 2 mins. 0 is never time out. */
-		unsigned int m_nIdleTimeoutMS;
+		uint32 m_nIdleTimeoutMS;
 
 		/** Get last active time. */
-		unsigned int m_nLastActiveTime;
+		uint32 m_nLastActiveTime;
 
 		/** when does this connection started */
-		unsigned int m_nStartTime;
+		uint32 m_nStartTime;
+
+		/** why is this connection stopped */
+		int32 m_nStopReason;
+
+		WebSocket::WebSocketReader m_websocket_reader;
+		WebSocket::WebSocketWriter m_websocket_writer;
+		std::vector<byte> m_websocket_input_data;
+		std::vector<byte> m_websocket_out_data;
+
+		ProtocolType m_protocolType;
 	};
 	
 

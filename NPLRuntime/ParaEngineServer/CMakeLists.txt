@@ -4,12 +4,16 @@
 # Desc: option modify PARAENGINE_COMPILE_LIB
 project (ParaEngineServer)
 
+include_directories(../embed-resource)
+add_subdirectory(../embed-resource ${PROJECT_BINARY_DIR}/../embed-resource)
+
 set (CLIENT_SOURCE_DIR ${PROJECT_SOURCE_DIR}/../../Client/trunk/ParaEngineClient)
 
 # The version number.
 set (ParaEngineServer_VERSION_MAJOR 1)
 set (ParaEngineServer_VERSION_MINOR 0)
 
+set(EXTRA_LIBRARIES )
 if (WIN32)
 	# Note: if true, we will produce dll instead of exe, only under win32
 	set(PARAENGINE_COMPILE_LIB    false)
@@ -19,7 +23,7 @@ find_package(OpenGL REQUIRED)
 include_directories( ${OPENGL_INCLUDE_DIRS}  )
 
 ##############################
-file (GLOB ParaEngineServer_Engine_FILES ${CLIENT_SOURCE_DIR}/Engine/ParaEngineServer.cpp)
+file (GLOB ParaEngineServer_Engine_FILES ${CLIENT_SOURCE_DIR}/Engine/ParaEngineServer.cpp ${CLIENT_SOURCE_DIR}/Engine/ParaXStaticBase.cpp)
 SOURCE_GROUP("Engine" FILES ${ParaEngineServer_Engine_FILES})
 list(APPEND ParaEngineServer_SRCS ${ParaEngineServer_Engine_FILES})
 
@@ -60,7 +64,7 @@ list(APPEND ParaEngineServer_SRCS ${ParaEngineServer_renderer_FILES})
 ##############################
 file (GLOB ParaEngineServer_pb_FILES ${CLIENT_SOURCE_DIR}/protocol/*.h ${CLIENT_SOURCE_DIR}/protocol/*.cpp)
 SOURCE_GROUP("protocol" FILES ${ParaEngineServer_pb_FILES})
-list(APPEND ParaEngineServer_SRCS ${ParaEngineServer_pb_FILES})
+list(APPEND ParaEngineServer_SRCS ${ParaEngineServer_pb_FILES}) 
 
 ##############################
 file (GLOB ParaEngineServer_ParaXModel_FILES ${CLIENT_SOURCE_DIR}/ParaXModel/*.cpp ${CLIENT_SOURCE_DIR}/ParaXModel/*.h ${CLIENT_SOURCE_DIR}/ParaXModel/*.templates ${CLIENT_SOURCE_DIR}/ParaXModel/*.inl)
@@ -87,6 +91,15 @@ list(APPEND ParaEngineServer_SRCS ${ParaEngineServer_IO_FILES})
 #file (GLOB ParaEngineServer_Common_FILES ${CLIENT_SOURCE_DIR}/common/*.*)
 #SOURCE_GROUP("Externals\\CommonDirectX" FILES ${ParaEngineServer_Common_FILES})
 #list(APPEND ParaEngineServer_SRCS ${ParaEngineServer_Common_FILES})
+
+set(EmbeddedResource_FILES)
+# embedded resource
+embed_resources_abs(MyResource "${CLIENT_SOURCE_DIR}/res/ParaXmodel.templates")
+list(APPEND EmbeddedResource_FILES ${MyResource})
+
+list(APPEND EmbeddedResource_FILES ${CLIENT_SOURCE_DIR}/ResourceEmbedded.cpp)
+list(APPEND ParaEngineServer_SRCS ${EmbeddedResource_FILES})
+SOURCE_GROUP("ResEmbedded" FILES ${EmbeddedResource_FILES})
 
 ##############################
 file (GLOB ParaEngineServer_CurlLua_FILES ${CLIENT_SOURCE_DIR}/curllua/*.*)
@@ -158,6 +171,33 @@ set_source_files_properties(${ParaEngineClient_DOCUMENT_FILES} PROPERTIES HEADER
 list(APPEND ParaEngineServer_SRCS ${ParaEngineClient_DOCUMENT_FILES})
 
 ##############################
+# WebSocket
+file (GLOB ParaEngineServer_WebSocket_FILES ${CLIENT_SOURCE_DIR}/WebSocket/*.cpp ${CLIENT_SOURCE_DIR}/WebSocket/*.h ${CLIENT_SOURCE_DIR}/WebSocket/*.cpp)
+SOURCE_GROUP("WebSocket" FILES ${ParaEngineServer_WebSocket_FILES})
+list(APPEND ParaEngineServer_SRCS ${ParaEngineServer_WebSocket_FILES})
+
+#######################################
+# PCH: precompiled header under msvc
+if (MSVC)
+	set_source_files_properties(${CLIENT_SOURCE_DIR}/Core/ParaEngine.cxx
+		PROPERTIES
+		COMPILE_FLAGS "/YcParaEngine.h"
+		)
+	foreach( src_file ${ParaEngineServer_SRCS} )
+		if(${src_file} MATCHES "cpp")
+			set_source_files_properties(
+				${src_file}
+				PROPERTIES
+				COMPILE_FLAGS "/YuParaEngine.h"
+				)
+		endif(${src_file} MATCHES "cpp")
+	endforeach( src_file ${ParaEngineServer_SRCS} )
+	
+	list(APPEND ParaEngineServer_SRCS ${CLIENT_SOURCE_DIR}/Core/ParaEngine.cxx)
+endif (MSVC)
+
+
+##############################
 # add the binary tree to the search path for include files
 include_directories("${CLIENT_SOURCE_DIR}")
 include_directories("${CLIENT_SOURCE_DIR}/Core")
@@ -177,6 +217,9 @@ include_directories("${luabind_SOURCE_DIR}")
 include_directories("${tinyxpath_SOURCE_DIR}")
 include_directories("${lua_SOURCE_DIR}/src/")
 include_directories("${jsoncpp_SOURCE_DIR}/include")
+
+
+
 IF(WIN32)
 	include_directories("${ZLIB_SOURCE_DIR}")
 	include_directories("${CURL_SOURCE_DIR}/include/")
@@ -184,6 +227,18 @@ IF(WIN32)
 ELSE(WIN32)
 	INCLUDE_DIRECTORIES(${CURL_INCLUDE_DIR})
 ENDIF(WIN32)
+
+## Readline support
+include("${PROJECT_SOURCE_DIR}/../cmake/FindReadline.cmake")
+# FIND_PACKAGE(Readline)
+IF(READLINE_FOUND)
+  ADD_DEFINITIONS("-DNPL_USE_READLINE")
+  LIST(APPEND EXTRA_LIBRARIES ${Readline_LIBRARY})
+  MESSAGE("NPL_USE_READLINE read line is found and used")
+  INCLUDE_DIRECTORIES(${READLINE_INCLUDE_DIR})
+ELSE()
+	MESSAGE("warning: NPL_USE_READLINE NOT FOUND please apt-get install libreadline6 libreadline6-dev")
+ENDIF()
 
 IF(WIN32)
 	ADD_DEFINITIONS(-DPLATFORM_WINDOWS)
@@ -198,7 +253,11 @@ IF(WIN32)
 		ADD_DEFINITIONS(-D_CRT_SECURE_NO_WARNINGS)
 	endif(MSVC)
 ELSE (WIN32)
-	ADD_DEFINITIONS(-DPLATFORM_LINUX)
+	IF(APPLE)
+		ADD_DEFINITIONS(-DPLATFORM_MAC)
+	ELSE(APPLE)
+		ADD_DEFINITIONS(-DPLATFORM_LINUX)
+	ENDIF(APPLE)
 ENDIF(WIN32)
 
 ADD_DEFINITIONS(-DBOOST_SIGNALS_NO_DEPRECATION_WARNING)
@@ -229,18 +288,15 @@ IF(MSVC)
 	SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /MP")
 	SET(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} /MP")
 	SET(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} /MP")
-			
-	# /GR- Remove RTTI to miminize the executable size
-	SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GR-")
-	SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
+
 ENDIF()
 
-# NOTE: This generate smaller and faster exe/dll, but no other libs should to it statically. 
+# NOTE: This generate smaller and faster exe/dll, but no other libs should to it statically.
 option(USE_LINK_TIME_CODE_GENERATION	"true to enable link time code gen in release build" OFF)
 
 IF(MSVC)
 	if(USE_LINK_TIME_CODE_GENERATION)
-		# /GL Link time code generation. Note turn this off if you have plugins that links to ParaEngineServer. 
+		# /GL Link time code generation. Note turn this off if you have plugins that links to ParaEngineServer.
 		SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
 		# /LTCG Link time code generation
 		if (PARAENGINE_COMPILE_LIB)
@@ -251,8 +307,10 @@ IF(MSVC)
 	endif(USE_LINK_TIME_CODE_GENERATION)
 
 	# /GR- Remove RTTI to miminize the executable size
+	# SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GR-")
+
 	# /Zi generate program database (PDB symbol files even in release build)
-	SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi /GR-")
+	SET(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /Zi")
 	SET(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /Zi")
 	if (PARAENGINE_COMPILE_LIB)
 		# To turn size optimisations on again
@@ -266,16 +324,28 @@ IF(MSVC)
 		SET(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LARGEADDRESSAWARE /PDBSTRIPPED:Release/ParaEngineServer.stripped.pdb")
 	endif (PARAENGINE_COMPILE_LIB)
 ELSE()
+
+	# set debug
+	# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -std=c++11")
+
+
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
-	
+
 	# remove Run-Time-Type-Information (RTTI) to miminize the executable size
 	# set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -fno-rtti")
-	
-	# -Os to optimize for size. or -O3 to turn on all optimizations. 
-	# -s option to strip debug info, -g to include debug info
-	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -s")
-	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3 -s")
-	
+
+	IF(APPLE)
+		# -Os to optimize for size. or -O3 to turn on all optimizations.
+		# no -s option since it has the same effect as gcc -s if not a single -g is provided
+		set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3")
+		set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3")
+	ELSE()
+		# -Os to optimize for size. or -O3 to turn on all optimizations.
+		# -s option to strip debug info, -g to include debug info
+		set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -s")
+		set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3 -s")
+	ENDIF()
+
 	# suppress warnings
 	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-deprecated-declarations")
 ENDIF()
@@ -284,7 +354,7 @@ ENDIF()
 if (PARAENGINE_COMPILE_LIB)
 	SET(CMAKE_DEBUG_POSTFIX "_d")
 	add_library(ParaEngineServer SHARED ${ParaEngineServer_HEADERS} ${ParaEngineServer_SRCS})
-	
+
 else (PARAENGINE_COMPILE_LIB)
 	# add the executable
 	add_executable(ParaEngineServer ${ParaEngineServer_HEADERS} ${ParaEngineServer_SRCS})
@@ -298,8 +368,40 @@ endif()
 endif (PARAENGINE_COMPILE_LIB)
 
 
+if(APPLE)
+	# for luajit 2.0 & mac
+    # SET(CMAKE_EXE_LINKER_FLAGS "-pagezero_size 10000 -image_base 100000000 ${CMAKE_EXE_LINKER_FLAGS}")
+endif()
+
+if(APPLE)
+    set(LUA_LIBRARY luajit21)
+else()
+    set(LUA_LIBRARY lua)
+endif()
+
+##############################
+# iconv
+option(NPLRUNTIME_ICONV "include iconv" ON)
+
+if(NPLRUNTIME_ICONV)
+	ADD_DEFINITIONS(-DUSE_ICONV)
+
+
+	if(APPLE)
+		list(APPEND EXTRA_LIBRARIES iconv)
+	#elseif (LINUX OR UNIX)
+	#	list(APPEND EXTRA_LIBRARIES libiconv)
+	else()
+		add_subdirectory(${SERVER_SOURCE_DIR}libiconv ${NPLRuntime_BINARY_DIR}/libiconv)
+		set(ICONV_INCLUDE_DIR ${SERVER_SOURCE_DIR}libiconv/include ${NPLRuntime_BINARY_DIR}/libiconv/include)
+		set(ICONV_SOURCE_DIR ${SERVER_SOURCE_DIR}libiconv/src ${NPLRuntime_BINARY_DIR}/libiconv/src)
+		include_directories("${ICONV_INCLUDE_DIR}")
+		list(APPEND EXTRA_LIBRARIES libiconv)
+	endif()
+endif()
+
 if (WIN32)
-  set(EXTRA_LIBRARIES
+  set(EXTRA_LIBRARIES ${EXTRA_LIBRARIES}
 			Ws2_32
 			winmm
 			wsock32
@@ -311,20 +413,35 @@ if (WIN32)
 			libcurl
   )
 else (WIN32)
-  set(EXTRA_LIBRARIES
-  		rt 
-  		dl
-  		resolv
-  		z
-		${CURL_LIBRARIES}
-		pthread
-  )
+	if(LINUX)
+		set(EXTRA_LIBRARIES ${EXTRA_LIBRARIES}
+				rt
+				dl
+				resolv
+				z
+			${CURL_LIBRARIES}
+			pthread
+		)
+	else(LINUX)
+		set(EXTRA_LIBRARIES ${EXTRA_LIBRARIES}
+				dl
+				resolv
+				z
+			${CURL_LIBRARIES}
+			pthread
+		)
+	endif(LINUX)
+	if(APPLE)
+	    ## this is for file monitor API in MAC OSX
+		set(EXTRA_LIBRARIES ${EXTRA_LIBRARIES} "-framework CoreFoundation" "-framework CoreServices")
+	endif(APPLE)
 endif (WIN32)
 
-# Link the executable to the libraries. 
-target_link_libraries (ParaEngineServer 
-	${Boost_LIBRARIES} 
-	sqlite lua jsoncpp tinyxpath luabind 
+
+# Link the executable to the libraries.
+target_link_libraries (ParaEngineServer
+    ${Boost_LIBRARIES} ${LUA_LIBRARY}
+	sqlite jsoncpp tinyxpath luabind
 	${OPENGL_LIBRARIES}
 	${EXTRA_LIBRARIES}
 )

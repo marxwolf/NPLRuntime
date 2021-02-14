@@ -29,6 +29,7 @@ If your image has sharp transitions between multiple alpha levels (one pixel is 
 #include <gdiplus.h>
 #include "ContentLoaders.h"
 #include "AsyncLoader.h"
+#include "ViewportManager.h"
 #include "TextureEntityDirectX.h"
 
 #ifdef PARAENGINE_CLIENT
@@ -256,11 +257,20 @@ const TextureEntityDirectX::TextureInfo* TextureEntityDirectX::GetTextureInfo()
 				}
 				else
 				{
-					if(IsLocked() || GetTexture() == 0)
+					if (IsLocked() || (GetTexture() == 0 && GetSurface() == 0))
 					{
 						// if texture is locked (being downloaded)
 						m_pTextureInfo->m_width = -1;
 						m_pTextureInfo->m_height = -1;
+					}
+					else if (GetSurface())
+					{
+						D3DSURFACE_DESC desc;
+						if (SUCCEEDED(GetSurface()->GetDesc(&desc)))
+						{
+							m_pTextureInfo->m_width = desc.Width;
+							m_pTextureInfo->m_height = desc.Height;
+						}
 					}
 					else if(m_pTexture)
 					{
@@ -889,21 +899,38 @@ void TextureEntityDirectX::LoadImage(char *sBufMemFile, int sizeBuf, int &width,
 	SAFE_RELEASE( pTexture );
 }
 
-
-bool TextureEntityDirectX::LoadImageOfFormat(const std::string& sTextureFileName, char *sBufMemFile, int sizeBuf, int &width, int &height, byte ** ppBuffer, int* pBytesPerPixel, int nFormat)
+bool TextureEntityDirectX::LoadImageOfFormatEx(const std::string& sTextureFileName, char *sBufMemFile, int sizeBuf, int &width, int &height, byte ** ppBuffer, int* pBytesPerPixel, int nFormat, ImageExtendInfo *exInfo)
 {
 #ifdef USE_FREEIMAGE
-	if (nFormat<=0)
+	if (nFormat <= 0)
 		nFormat = PixelFormat32bppARGB;
 
 	int nBytesPerPixel = 0;
-	MemIO memIO((BYTE*)sBufMemFile);
+	MemIO memIO((BYTE*)sBufMemFile, sizeBuf);
 	FIBITMAP *dib = FreeImage_LoadFromHandle((FREE_IMAGE_FORMAT)GetFormatByFileName(sTextureFileName), &memIO, (fi_handle)&memIO);
 	if (dib == 0)
 	{
 		OUTPUT_LOG("warning: can not load terrain region file %s \n", sTextureFileName.c_str());
 		return false;
 	}
+
+
+	if (exInfo)
+	{
+		FITAG *tag = nullptr;
+		FreeImage_GetMetadata(FIMD_EXIF_EXIF, dib, "FocalLength", &tag);
+		if (tag)
+		{
+			// value type is  FIDT_RATIONAL  Two LONGs: the first represents the numerator of a fraction; the second, the denominator 
+			if (FreeImage_GetTagType(tag) == FIDT_RATIONAL)
+			{
+				long* value = (long*)FreeImage_GetTagValue(tag);
+				exInfo->FocalLength = (double)value[0] / value[1];
+			}
+		}
+	}
+	
+
 	BITMAPINFOHEADER* pInfo = FreeImage_GetInfoHeader(dib);
 
 	if (pInfo)
@@ -911,9 +938,30 @@ bool TextureEntityDirectX::LoadImageOfFormat(const std::string& sTextureFileName
 		width = pInfo->biWidth;
 		height = pInfo->biHeight;
 		nBytesPerPixel = pInfo->biBitCount / 8;
+
+		if (((nFormat == PixelFormat32bppARGB && pInfo->biBitCount != 32) || (nFormat == PixelFormat24bppRGB && pInfo->biBitCount != 24) || pInfo->biBitCount < 8)
+			&& FreeImage_GetColorType(dib) == FIC_PALETTE)
+		{
+			auto oldDib = dib;
+			if (nFormat == PixelFormat24bppRGB) {
+				dib = FreeImage_ConvertTo24Bits(dib);
+			}
+			else {
+				dib = FreeImage_ConvertTo32Bits(dib);
+			}
+			FreeImage_Unload(oldDib);
+			pInfo = FreeImage_GetInfoHeader(dib);
+			if (pInfo)
+			{
+				width = pInfo->biWidth;
+				height = pInfo->biHeight;
+				nBytesPerPixel = pInfo->biBitCount / 8;
+			}
+		}
 	}
 	else
 		return false;
+
 
 	BYTE* pPixels = FreeImage_GetBits(dib);
 	if (pPixels)
@@ -931,6 +979,11 @@ bool TextureEntityDirectX::LoadImageOfFormat(const std::string& sTextureFileName
 #else
 	return false;
 #endif
+}
+
+bool TextureEntityDirectX::LoadImageOfFormat(const std::string& sTextureFileName, char *sBufMemFile, int sizeBuf, int &width, int &height, byte ** ppBuffer, int* pBytesPerPixel, int nFormat)
+{
+	return TextureEntityDirectX::LoadImageOfFormatEx(sTextureFileName, sBufMemFile, sizeBuf, width, height, ppBuffer, pBytesPerPixel, nFormat);
 }
 
 
@@ -988,6 +1041,9 @@ bool TextureEntityDirectX::SetRenderTarget(int nIndex)
 	if (bReleaseSrc)
 	{
 		SAFE_RELEASE(pSrcSurface);
+	}
+	if (res && nIndex == 0){
+		CGlobals::GetViewportManager()->GetActiveViewPort()->ApplyViewport();
 	}
 	return res;
 }

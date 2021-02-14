@@ -1,6 +1,7 @@
 #pragma once
 #include "IAttributeFields.h"	
 
+
 namespace ParaEngine
 {
 	void dosdatetime2filetime(WORD dosdate, WORD dostime, time_t *ft);
@@ -58,6 +59,9 @@ namespace ParaEngine
 		*/
 		DWORD ZipAdd(const char* destFilename, const char* filename);
 
+		
+		DWORD ZipAdd(const char* destFilename, CParaFile* pFile);
+
 		/**
 		* add a zip folder to the zip file. call this for each folder to be added to the zip.
 		* It does not check for duplicates
@@ -68,7 +72,7 @@ namespace ParaEngine
 
 		/**
 		* add everything in side a directory to the zip. 
-		* e.g. AddDirectory("myworld/", "worlds/myworld/*.*", 10);
+		* e.g. AddDirectory("myworld/", "worlds/myworld/ *.*", 10);
 		* @param dstzn: all files in fn will be appended with this string to be saved in the zip file.
 		* @param filepattern: file patterns, which can include wild characters in the file portion.
 		* @param nSubLevel: sub directory levels. 0 means only files at parent directory.
@@ -81,12 +85,15 @@ namespace ParaEngine
 		*/
 		DWORD close();
 
+		/** compress without zip header*/
+		static int Compress(std::string& outstring, const char* src, int nSrcSize, int compressionlevel = -1);
+
 	protected:
 		int SaveAndClose();
 		void removeAllEntries();
 
 	protected:
-		vector<ZipArchiveEntry*>  m_entries;
+		std::vector<ZipArchiveEntry*>  m_entries;
 		std::string m_filename;
 		std::string m_password;
 	};

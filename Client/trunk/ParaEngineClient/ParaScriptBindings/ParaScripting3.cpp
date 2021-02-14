@@ -121,7 +121,7 @@ void CNPLScriptingState::LoadHAPI_SceneManager()
 
 				def("SetBlockUserData",&ParaTerrain::SetBlockUserData),
 				def("SetBlockUserDataByIdx",&ParaTerrain::SetBlockUserDataByIdx),
-				
+		
 				def("GetBlockUserData",&ParaTerrain::GetBlockUserData),
 				def("GetBlockUserDataByIdx",&ParaTerrain::GetBlockUserDataByIdx),
 
@@ -146,7 +146,7 @@ void CNPLScriptingState::LoadHAPI_SceneManager()
 				def("SetChunkColumnTimeStamp", &ParaTerrain::SetChunkColumnTimeStamp),
 				def("GetMapChunkData", &ParaTerrain::GetMapChunkData),
 				def("ApplyMapChunkData", &ParaTerrain::ApplyMapChunkData),
-
+				def("GetBlockFullData", &ParaTerrain::GetBlockFullData, pure_out_value(_4) + pure_out_value(_5)),
 				def("SetBlockWorldSunIntensity",&ParaTerrain::SetBlockWorldSunIntensity)
 			]
 		];
@@ -219,6 +219,7 @@ void CNPLScriptingState::LoadHAPI_ResourceManager()
 				.def("EndPass", &ParaAssetObject::EndPass)
 				.def("End", &ParaAssetObject::End)
 				.def("CommitChanges", &ParaAssetObject::CommitChanges)
+				.def("SetCallback", &ParaAssetObject::SetCallback)
 				.def("GetType", &ParaAssetObject::GetType),
 				// parameter block object declarations
 				class_<ParaParamBlock>("ParaParamBlock")
@@ -243,6 +244,7 @@ void CNPLScriptingState::LoadHAPI_ResourceManager()
 				def("OpenArchive", &ParaAsset::OpenArchiveEx),
 				def("CloseArchive", &ParaAsset::CloseArchive),
 				def("GeneratePkgFile", &ParaAsset::GeneratePkgFile),
+				def("GeneratePkgFile", &ParaAsset::GeneratePkgFile_),
 				def("Init", &ParaAsset::Init),
 				def("Unload", &ParaAsset::Unload),
 				def("UnloadAll", &ParaAsset::UnloadAll),
@@ -255,6 +257,7 @@ void CNPLScriptingState::LoadHAPI_ResourceManager()
 				def("LoadStaticMesh", &ParaAsset::LoadStaticMesh),
 				def("LoadTexture", &ParaAsset::LoadTexture),
 				def("LoadRenderTarget", &ParaAsset::LoadRenderTarget),
+				def("LoadPickingBuffer", &ParaAsset::LoadPickingBuffer),
 				def("LoadSpriteFrame", &ParaAsset::LoadSpriteFrame),
 				def("LoadFont", &ParaAsset::LoadFont),
 				def("LoadImageFont", &ParaAsset::LoadImageFont),
@@ -273,10 +276,26 @@ void CNPLScriptingState::LoadHAPI_ResourceManager()
 
 }
 
+
+int NPL_export_capi(lua_State *L){
+	return ParaScripting::CNPL::export_(L);
+}
+
+int NPL_filename_capi(lua_State *L){
+	const char* filename = ParaScripting::CNPL::GetFileName(L);
+	if (filename != 0)
+	{
+		lua_pushlstring(L, filename, strlen(filename));
+		return 1;
+	}
+	return 0;
+}
+
 void CNPLScriptingState::LoadHAPI_NPL()
 {
 	using namespace luabind;
 	lua_State* L = GetLuaState();
+
 	module(L)
 		[
 			//		def("_ALERT", (void (*) (const object& ))&NPL_Alert),
@@ -296,6 +315,9 @@ void CNPLScriptingState::LoadHAPI_NPL()
 				.def("SetMsgQueueSize", &ParaNPLRuntimeState::SetMsgQueueSize)
 				.def("GetMsgQueueSize", &ParaNPLRuntimeState::GetMsgQueueSize)
 				.def("WaitForMessage", &ParaNPLRuntimeState::WaitForMessage)
+				.def("WaitForMessage", &ParaNPLRuntimeState::WaitForMessage2)
+				.def("GetField", &ParaNPLRuntimeState::GetField)
+				.def("SetField", &ParaNPLRuntimeState::SetField)
 				.def("PeekMessage", &ParaNPLRuntimeState::PeekMessage)
 				.def("PopMessageAt", &ParaNPLRuntimeState::PopMessageAt)
 				.def("GetStats", &ParaNPLRuntimeState::GetStats),
@@ -306,7 +328,6 @@ void CNPLScriptingState::LoadHAPI_NPL()
 				def("activate", &CNPL::activate5),
 				def("activate", &CNPL::activate1),
 				def("call",&CNPL::call),
-				def("GetFileName",&CNPL::GetFileName),
 				def("load", &CNPL::load1),
 				def("load", &CNPL::load),
 				def("StartNetServer", &CNPL::StartNetServer),
@@ -316,6 +337,7 @@ void CNPLScriptingState::LoadHAPI_NPL()
 				def("AddNPLRuntimeAddress", &CNPL::AddNPLRuntimeAddress),
 				def("GetIP", &CNPL::GetIP),
 				def("accept", &CNPL::accept),
+				def("SetProtocol", &CNPL::SetProtocol),
 				def("reject", &CNPL::reject),
 				def("SetUseCompression", &CNPL::SetUseCompression),
 				def("SetCompressionKey", &CNPL::SetCompressionKey),
@@ -332,6 +354,7 @@ void CNPLScriptingState::LoadHAPI_NPL()
 				def("DoString",&CNPL::DoString2),
 				def("test",&CNPL::test),
 				def("SerializeToSCode",&CNPL::SerializeToSCode),
+				def("SerializeToSCode", &CNPL::SerializeToSCode2),
 				def("IsSCodePureData",&CNPL::IsSCodePureData),
 				def("IsPureData",&CNPL::IsPureData),
 				def("IsPureTable",&CNPL::IsPureTable),
@@ -361,10 +384,34 @@ void CNPLScriptingState::LoadHAPI_NPL()
 				def("GetStats",&CNPL::GetStats),
 
 				def("FromJson",&CNPL::FromJson),
+				def("ToJson", &CNPL::ToJson),
+				def("ToJson", &CNPL::ToJson2),
+				def("Compress", &CNPL::Compress),
+				def("Decompress", &CNPL::Decompress),
 				def("this", &CNPL::this2_),
 				def("this", &CNPL::this_)
 			]
 		];
+
+	{
+		// register a number of NPL C API. 
+		lua_pushlstring(L, "NPL", 3);
+		lua_rawget(L, LUA_GLOBALSINDEX);
+		if (lua_istable(L, -1))
+		{
+			// NPL.export function
+			lua_pushlstring(L, "export", 6);
+			lua_pushcfunction(L, NPL_export_capi);
+			lua_rawset(L, -3);
+			// NPL.filename function
+			lua_pushlstring(L, "filename", 8);
+			lua_pushcfunction(L, NPL_filename_capi);
+			lua_rawset(L, -3);
+
+			lua_pop(L, 1);
+		}
+	}
+
 #ifdef PARAENGINE_CLIENT
 	module(L)
 		[

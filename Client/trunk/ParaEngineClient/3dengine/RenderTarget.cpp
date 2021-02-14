@@ -426,7 +426,7 @@ ImageEntity* ParaEngine::CRenderTarget::NewImage(bool bFlipImage, Color colorKey
 
 void ParaEngine::CRenderTarget::SetRenderTargetSize(int nWidth, int nHeight)
 {
-	if (m_nTextureWidth != nWidth || m_nTextureHeight != m_nTextureHeight)
+	if (m_nTextureWidth != nWidth || m_nTextureHeight != nHeight)
 	{
 		SetDirty(true);
 		Cleanup();
@@ -453,10 +453,25 @@ ParaEngine::Vector2 ParaEngine::CRenderTarget::GetRenderTargetSize()
 	return Vector2((float)nWidth, (float)nHeight);
 }
 
+const std::string& ParaEngine::CRenderTarget::GetCanvasTextureName()
+{
+	if (m_sCanvasTextureName.empty()){
+		m_sCanvasTextureName = "_miniscenegraph_";
+		m_sCanvasTextureName += GetIdentifier();
+	}
+	return m_sCanvasTextureName;
+}
+
+void ParaEngine::CRenderTarget::SetCanvasTextureName(const std::string& sValue)
+{
+	if (m_sCanvasTextureName != sValue){
+		m_sCanvasTextureName = sValue;
+	}
+}
+
 bool ParaEngine::CRenderTarget::InitWithWidthAndHeight(int width, int height, D3DFORMAT format, D3DFORMAT depthStencilFormat /*= D3DFMT_D16*/)
 {
-	string sKey = "_miniscenegraph_";
-	sKey += GetIdentifier();
+	const std::string& sKey = GetCanvasTextureName();
 
 	SetRenderTargetSize(width, height);
 
@@ -518,6 +533,7 @@ bool ParaEngine::CRenderTarget::Begin()
 	// no need to bind depth buffer, since it is automatically bind by opengl when frame buffer is bind. 
 	
 	pd3dDevice->BeginRenderTarget(m_nTextureWidth, m_nTextureHeight);
+#endif
 	//calculate viewport
 	{
 		ParaViewport myViewport;
@@ -527,7 +543,6 @@ bool ParaEngine::CRenderTarget::Begin()
 		myViewport.Height = GetTextureHeight();
 		pd3dDevice->SetViewport((D3DVIEWPORT9*)&myViewport);
 	}
-#endif
 	m_bIsBegin = true;
 	return true;
 }
@@ -596,21 +611,28 @@ CPaintEngine * ParaEngine::CRenderTarget::paintEngine() const
 	if (engine)
 		return engine;
 
-	CPaintEngine *engine = CPaintEngineGPU::GetInstance();
-	if (engine->isActive() && engine->paintDevice() != this) {
-		engine = new CPaintEngineGPU();
-		return engine;
+	CPaintEngine *engine_ = CPaintEngineGPU::GetInstance();
+	if (engine_->isActive() && engine_->paintDevice() != this) {
+		engine_ = new CPaintEngineGPU();
+		return engine_;
 	}
-	return engine;
+	return engine_;
 }
 
-void ParaEngine::CRenderTarget::DoPaint()
+void ParaEngine::CRenderTarget::DoPaint(CPainter* painter)
 {
 	ScriptCallback* pCallback = GetScriptCallback(Type_Paint);
 	if (pCallback)
 	{
-		CPainter painter(this);
-		pCallback->ActivateLocalNow(pCallback->GetCode());
+		if (painter)
+		{
+			pCallback->ActivateLocalNow(pCallback->GetCode());
+		}
+		else
+		{
+			CPainter painter(this);
+			pCallback->ActivateLocalNow(pCallback->GetCode());
+		}
 	}
 }
 

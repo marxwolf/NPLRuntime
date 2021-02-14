@@ -353,7 +353,7 @@ NPL::NPLReturnCode NPL::CNPLDispatcher::DispatchMsg( NPLMsgIn& msg )
 	NPLRuntimeState_ptr pRuntime = ParaEngine::CGlobals::GetNPLRuntime()->GetRuntimeState(msg.m_rts_name);
 	if(pRuntime)
 	{
-		if(msg.method.size()>0 && ( ((byte)(msg.method[0])) > 127 || msg.method == "A"))
+		if(msg.method.size()>0 && ( ((byte)(msg.method[0])) > 127 /*== 0xff*/ || msg.method == "A"))
 		{
 			if(CheckPubFile(msg.m_filename, msg.m_n_filename))
 			{
@@ -376,22 +376,22 @@ NPL::NPLReturnCode NPL::CNPLDispatcher::DispatchMsg( NPLMsgIn& msg )
 				// we append last to msg, so that nid or tid in the input message is overridden by the real value. 
 				if(msg.m_pConnection->IsAuthenticated())
 				{
-					msg_->m_code.append("nid=\"");
-					msg_->m_code.append(msg.m_pConnection->GetNID());
-					msg_->m_code.append("\"}");
+					msg_->m_code.append("nid=");
+					NPLHelper::EncodeStringInQuotation(msg_->m_code, msg_->m_code.size(), msg.m_pConnection->GetNID());
+					msg_->m_code.append("}");
 				}
 				else
 				{
-					msg_->m_code.append("tid=\"");
-					msg_->m_code.append(msg.m_pConnection->GetNID());
-					msg_->m_code.append("\",nid=nil}");
+					msg_->m_code.append("tid=");
+					NPLHelper::EncodeStringInQuotation(msg_->m_code, msg_->m_code.size(), msg.m_pConnection->GetNID());
+					msg_->m_code.append(",nid=nil}");
 				}
 				return pRuntime->Activate_async(msg_);
 			}
 			else
 			{
 				//#ifdef PARAENGINE_CLIENT
-				OUTPUT_LOG("error: NPL remote file access denied %s\n", msg.m_filename.c_str());
+				OUTPUT_LOG("error: NPL remote file access denied: %s(%d)\n", msg.m_filename.c_str(), msg.m_n_filename);
 				//#endif
 				return NPL_FileAccessDenied;
 			}
@@ -422,14 +422,14 @@ NPL::NPLReturnCode NPL::CNPLDispatcher::DispatchMsg( NPLMsgIn& msg )
 				msg_->m_code.append("msg={");
 
 				// add url or the "OK", "Error" string in response's first line
-				msg_->m_code.append("url=[[");
-				msg_->m_code.append(msg.m_filename);
-				msg_->m_code.append("]],");
+				msg_->m_code.append("url=");
+				NPLHelper::EncodeStringInQuotation(msg_->m_code, msg_->m_code.size(), msg.m_filename);
+				msg_->m_code.append(",");
 				
 				// add method: GET, POST,  HTTP/1.1, etc. 
-				msg_->m_code.append("method=[[");
-				msg_->m_code.append(msg.method);
-				msg_->m_code.append("]],");
+				msg_->m_code.append("method=");
+				NPLHelper::EncodeStringInQuotation(msg_->m_code, msg_->m_code.size(), msg.method);
+				msg_->m_code.append(",");
 
 				// rcode
 				msg_->m_code.append("rcode=");
@@ -440,11 +440,11 @@ NPL::NPLReturnCode NPL::CNPLDispatcher::DispatchMsg( NPLMsgIn& msg )
 				int nCount = (int)msg.headers.size();
 				for (int i=0;i <nCount; ++i)
 				{
-					msg_->m_code.append("[\"");
-					msg_->m_code.append(msg.headers[i].name);
-					msg_->m_code.append("\"]=[[");
-					msg_->m_code.append(msg.headers[i].value);
-					msg_->m_code.append("]],");
+					msg_->m_code.append("[");
+					NPLHelper::EncodeStringInQuotation(msg_->m_code, msg_->m_code.size(), msg.headers[i].name);
+					msg_->m_code.append("]=");
+					NPLHelper::EncodeStringInQuotation(msg_->m_code, msg_->m_code.size(), msg.headers[i].value);
+					msg_->m_code.append(",");
 				}
 
 				// add body
@@ -465,15 +465,15 @@ NPL::NPLReturnCode NPL::CNPLDispatcher::DispatchMsg( NPLMsgIn& msg )
 				// we append last to msg, so that nid or tid in the input message is overridden by the real value. 
 				if(msg.m_pConnection->IsAuthenticated())
 				{
-					msg_->m_code.append("nid=\"");
-					msg_->m_code.append(msg.m_pConnection->GetNID());
-					msg_->m_code.append("\"}");
+					msg_->m_code.append("nid=");
+					NPLHelper::EncodeStringInQuotation(msg_->m_code, msg_->m_code.size(), msg.m_pConnection->GetNID());
+					msg_->m_code.append("}");
 				}
 				else
 				{
-					msg_->m_code.append("tid=\"");
-					msg_->m_code.append(msg.m_pConnection->GetNID());
-					msg_->m_code.append("\",nid=nil}");
+					msg_->m_code.append("tid=");
+					NPLHelper::EncodeStringInQuotation(msg_->m_code, msg_->m_code.size(), msg.m_pConnection->GetNID());
+					msg_->m_code.append(",nid=nil}");
 				}
 				return pRuntime->Activate_async(msg_);
 			}
@@ -518,7 +518,16 @@ void NPL::CNPLDispatcher::NPL_accept( const char* sTID, const char* sNID /*= NUL
 	}
 }
 
-void NPL::CNPLDispatcher::RenameConnection( NPLConnection_ptr pConnection, const char* sNID )
+void NPL::CNPLDispatcher::NPL_SetProtocol(const char* nid, CNPLConnection::ProtocolType protocolType)
+{
+	NPLConnection_ptr conn = GetNPLConnectionByNID(nid);
+	if (conn)
+	{
+		conn->SetProtocol(protocolType);
+	}
+}
+
+void NPL::CNPLDispatcher::RenameConnection(NPLConnection_ptr pConnection, const char* sNID)
 {
 	ParaEngine::Lock lock_(m_mutex);
 	RenameConnectionImp(pConnection, sNID);

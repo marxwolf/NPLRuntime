@@ -1,9 +1,9 @@
 //-----------------------------------------------------------------------------
 // Class:Block max model parser	
-// Authors:	leio, LiXizhi
+// Authors:	leio, LiXizhi, wujiajun(winless)
 // Emails:	lixizhi@yeah.net
 // Date:	2015.6.29
-// Desc: at most 256*256*256 blocks can be loaded
+// Desc: at most 65535*65535*65535 blocks can be loaded
 //-----------------------------------------------------------------------------
 #include "ParaEngine.h"
 #include "BlockEngine/BlockModel.h"
@@ -24,15 +24,23 @@
 #include "BMaxAnimGenerator.h"
 #include "BMaxParser.h"
 
+#include "ZipArchive.h"
+
+/** @def define this to use algorithm that is not recursive for merging coplanar faces. */
+#define USE_COPLANER_ALGORITHM_NON_RECURSIVE
+
 namespace ParaEngine
 {
 	const int BMaxParser::MaxBoneLengthHorizontal = 50;
 	const int BMaxParser::MaxBoneLengthVertical = 100;
 
-	BMaxParser::BMaxParser(const char* pBuffer, int32 nSize)
-		: m_bAutoScale(true), m_nHelperBlockId(90), m_pAnimGenerator(NULL)
-		, m_bHasAnimation(false), m_centerPos(0, 0, 0), m_fScale(1.f)
+	BMaxParser::BMaxParser(const char* pBuffer, int32 nSize, const char* filename, BMaxParser* pParent)
+		: m_bAutoScale(true), m_nHelperBlockId(90), m_pAnimGenerator(NULL), m_pParent(pParent),
+		m_bHasAnimation(false), m_centerPos(0, 0, 0), m_fScale(1.f), m_nLodLevel(0)
 	{
+		m_bHasBoneBlock = false;
+		if (filename)
+			SetFilename(filename);
 		Load(pBuffer, nSize);
 	}
 
@@ -49,7 +57,21 @@ namespace ParaEngine
 
 	void BMaxParser::Load(const char* pBuffer, int32 nSize)
 	{
+		m_nLodLevel = 0;
+
 		BMaxXMLDocument doc;
+
+		std::string uncompressedData;
+		
+		if (IsZipData(pBuffer, nSize))
+		{
+			if (GetFirstFileData(pBuffer, uncompressedData))
+			{
+				pBuffer = uncompressedData.c_str();
+			}
+		}
+
+
 		doc.Parse(pBuffer);
 		ParseHead(doc);
 		ParseBlocks(doc);
@@ -68,9 +90,7 @@ namespace ParaEngine
 				ParseBlocks_Internal(value);
 				ParseBlockFrames();
 				CalculateBoneWeights();
-				ParseVisibleBlocks();
-				if (m_bAutoScale)
-					ScaleModels();
+				MergeCoplanerBlockFace();
 			}
 		}
 	}
@@ -81,7 +101,6 @@ namespace ParaEngine
 		vector<BMaxNodePtr> nodes;
 		CShapeBox aabb;
 		NPL::NPLObjectProxy msg = NPL::NPLHelper::StringToNPLTable(value);
-		bool bHasBoneBlock = false;
 		for (NPL::NPLTable::IndexIterator_Type itCur = msg.index_begin(); itCur != msg.index_end(); ++itCur)
 		{
 			NPL::NPLObjectProxy& block = itCur->second;
@@ -107,22 +126,30 @@ namespace ParaEngine
 							std::string sFilename = attr["filename"];
 							if (!sFilename.empty())
 							{
-								BMaxBlockModelNodePtr node(new BMaxBlockModelNode(this, x, y, z, template_id, block_data));
-								node->SetFilename(sFilename);
-								node->SetFacing((float)((double)attr["facing"]));
-								nodes.push_back(BMaxNodePtr(node.get()));
+								if (IsFileNameRecursiveLoaded(sFilename))
+								{
+									OUTPUT_LOG("warning: bmax models reference the file %s recursively\n", sFilename.c_str());
+								}
+								else
+								{
+									BMaxBlockModelNodePtr node(new BMaxBlockModelNode(this, x, y, z, template_id, block_data));
+									node->SetFilename(sFilename);
+									node->SetFacing((float)((double)attr["facing"]));
+									nodes.push_back(BMaxNodePtr(node.get()));
+								}
 							}
 						}
 					}
 				}
 				else if (template_id == BoneBlockId)
 				{
-					bHasBoneBlock = true;
+					
+					m_bHasBoneBlock = true;
 					int nBoneIndex = (int)m_bones.size();
 					BMaxFrameNodePtr pFrameNode(new BMaxFrameNode(this, x, y, z, template_id, block_data, nBoneIndex));
 					m_bones.push_back(pFrameNode);
 					nodes.push_back(BMaxNodePtr(pFrameNode.get()));
-
+					
 					if (block[6].GetType() == NPL::NPLObjectBase::NPLObjectType_Table)
 					{
 						NPL::NPLObjectProxy& entityData = block[6];
@@ -145,6 +172,8 @@ namespace ParaEngine
 									}
 									else
 										pFrameNode->GetBone()->SetName(sBoneName);
+
+									pFrameNode->GetBone()->AutoSetBoneInfoFromName();
 								}
 
 								/*const std::string& sBoneName = cmd[1];
@@ -179,8 +208,9 @@ namespace ParaEngine
 			}
 		}
 
+		CalculateAABB(nodes);
 		// set AABB and center
-		m_blockAABB = aabb;
+		/*m_blockAABB = aabb;
 		m_centerPos = m_blockAABB.GetCenter();
 		m_centerPos.y = 0;
 		m_centerPos.x = (m_blockAABB.GetWidth() + 1.f) * 0.5f;
@@ -196,23 +226,15 @@ namespace ParaEngine
 			node->y -= offset_y;
 			node->z -= offset_z;
 			InsertNode(node);
-		}
+		}*/
 
 		// set scaling;
-		if (m_bAutoScale)
-		{
-			float fMaxLength = Math::Max(Math::Max(m_blockAABB.GetHeight(), m_blockAABB.GetWidth()), m_blockAABB.GetDepth()) + 1.f;
-			m_fScale = CalculateScale(fMaxLength);
-			if (bHasBoneBlock)
-			{
-				// for animated models, it is by default 1-2 blocks high, for static models, it is 0-1 block high. 
-				m_fScale *= 2.f;
-			}
-		}
+		
 	}
 
 	void BMaxParser::ParseVisibleBlocks()
 	{
+		m_blockModels.clear();
 		for (auto& item : m_nodes)
 		{
 			BMaxNode* node = item.second.get();
@@ -227,11 +249,13 @@ namespace ParaEngine
 					BlockModel* tessellatedModel = new BlockModel();
 					if (node->TessellateBlock(tessellatedModel) > 0)
 					{
+						node->SetBlockModel(tessellatedModel);
 						m_blockModels.push_back(tessellatedModel);
 						m_blockModelsMapping[tessellatedModel] = node;
 					}
 					else
 					{
+						node->SetBlockModel(NULL);
 						delete tessellatedModel;
 					}
 				}
@@ -265,7 +289,7 @@ namespace ParaEngine
 		return (float)(BlockConfig::g_blockSize / nPowerOf2Length);
 	}
 
-	int BMaxParser::GetIndexFromXmlElement(BMaxXMLElement* node, const char* name, int& x, int& y, int& z)
+	int64 BMaxParser::GetIndexFromXmlElement(BMaxXMLElement* node, const char* name, int& x, int& y, int& z)
 	{
 		if (node == NULL)
 		{
@@ -287,7 +311,7 @@ namespace ParaEngine
 				y -= (int)m_blockAABB.GetMin().y;
 				z -= (int)m_blockAABB.GetMin().z;
 
-				int index = GetNodeIndex(x, y, z);
+				int64 index = (int64)GetNodeIndex(x, y, z);
 				return index;
 			}
 		}
@@ -296,15 +320,15 @@ namespace ParaEngine
 
 	BMaxNode* BMaxParser::GetBMaxNode(int x, int y, int z)
 	{
-		if (x >= 0 && y >= 0 && z >= 0 && x < 256 && y < 256 && z < 256)
+		if (x >= 0 && y >= 0 && z >= 0 ) // && x < 256 && y < 256 && z < 256
 			return GetNode((uint16)x, (uint16)y, (uint16)z);
 		else
 			return NULL;
 	}
 
-	int BMaxParser::InsertNode(BMaxNodePtr& nodePtr)
+	int64 BMaxParser::InsertNode(BMaxNodePtr& nodePtr)
 	{
-		int index = nodePtr->GetIndex();
+		auto index = nodePtr->GetIndex();
 		if (GetNode(nodePtr->x, nodePtr->y, nodePtr->z) == NULL)
 		{
 			m_nodes[index] = nodePtr;
@@ -324,14 +348,41 @@ namespace ParaEngine
 			}
 		}
 	}
+
 	CParaXModel* BMaxParser::ParseParaXModel()
 	{
+		ClearModel();
 		CParaXModel* pMesh = NULL;
 		ParaXHeaderDef m_xheader;
 		pMesh = new CParaXModel(m_xheader);
 		FillParaXModelData(pMesh);
 		pMesh->SetBmaxModel();
 		return pMesh;
+	}
+
+	CParaXModel * BMaxParser::ParseParaXModel(uint32 nMaxTriangleCount)
+	{
+		ClearModel();
+		CalculateLod(nMaxTriangleCount);
+
+		CParaXModel* pMesh = NULL;
+		ParaXHeaderDef m_xheader;
+		pMesh = new CParaXModel(m_xheader);
+		pMesh->SetBmaxModel();
+		if (m_rectangles.size() == 0)
+			return pMesh;
+		FillParaXModelData(pMesh);
+		return pMesh;
+	}
+
+	const std::string& BMaxParser::GetFilename() const
+	{
+		return m_filename;
+	}
+
+	void BMaxParser::SetFilename(const std::string& val)
+	{
+		m_filename = val;
 	}
 
 	void BMaxParser::SetAutoScale(bool value)
@@ -349,6 +400,423 @@ namespace ParaEngine
 		return m_centerPos;
 	}
 
+
+
+	void BMaxParser::MergeCoplanerBlockFace()
+	{
+		ParseVisibleBlocks();
+
+		m_rectangles.clear();
+		for (auto& item : m_nodes)
+		{
+			BMaxNode *node = item.second.get();
+			if (node->GetBlockModel())
+			{
+				for (int i = 0; i < 6; i++)
+				{
+					if (node->IsFaceNotUse(i))
+					{
+						FindCoplanerFace(node, i);
+					}
+				}
+			}
+		}
+
+		float fScale = m_fScale;
+		if (m_nLodLevel > 0) {
+			fScale *= (float)pow(2, m_nLodLevel);
+		}
+
+		for (RectanglePtr& rectangle : m_rectangles)
+		{
+			rectangle->ScaleVertices(fScale);
+		}
+		// OUTPUT_LOG("rect count %d \n", m_rectangles.size());
+	}
+
+
+	bool BMaxParser::IsCoplaneNode(BMaxNode* node1, BMaxNode* node2, int nFaceIndex)
+	{
+		return (node1 && node2 && node1->isSolid() && node2->isSolid() && 
+			node2->IsFaceNotUse(nFaceIndex) &&
+			node1->GetColor() == node2->GetColor() && 
+			node1->GetBoneIndex() == node2->GetBoneIndex() &&
+			node2->GetBlockModel() && node2->GetBlockModel()->GetVerticesCount() > 0);
+	}
+
+	void BMaxParser::FindCoplanerFace(BMaxNode* node, uint32 nFaceIndex)
+	{
+#ifdef USE_COPLANER_ALGORITHM_NON_RECURSIVE
+		const Vector3 *directionOffsetTable = Rectangle::DirectionOffsetTable;
+		int nIndex = nFaceIndex * 4;
+		BMaxNode* coplanar_node = node;
+
+		const Vector3& offset = directionOffsetTable[nIndex];
+		int nLength = 0;
+		for (nLength = 0; IsCoplaneNode(node, node->GetNeighbourByOffset(offset*(nLength + 1.f)), nFaceIndex); ++nLength)
+		{
+		}
+		int nLength2 = 0;
+		for (nLength2 = 0; IsCoplaneNode(node, node->GetNeighbourByOffset(-offset*(nLength2 + 1.f)), nFaceIndex); ++nLength2)
+		{
+		}
+
+		const Vector3& offset2 = directionOffsetTable[nIndex + 1];
+		int nLength1 = 0; 
+		bool bBreak = false;
+		for (nLength1 = 0; !bBreak; ++nLength1)
+		{
+			for (int i = -nLength2; i <= nLength; i++)
+			{
+				if (!IsCoplaneNode(node, node->GetNeighbourByOffset(offset2*(nLength1 + 1.f) + offset * (float)i), nFaceIndex))
+				{
+					nLength1 = nLength1 - 1;
+					bBreak = true;
+					break;
+				}
+			}
+		}
+		int nLength3 = 0;
+		bBreak = false;
+		for (nLength3 = 0; !bBreak; ++nLength3)
+		{
+			for (int i = -nLength2; i <= nLength; i++)
+			{
+				if (!IsCoplaneNode(node, node->GetNeighbourByOffset(-offset2*(nLength3 + 1.f) + offset * (float)i), nFaceIndex))
+				{
+					nLength3 = nLength3 - 1;
+					bBreak = true;
+					break;
+				}
+			}
+		}
+		// mark all faces as used
+		node->SetFaceUsed(nFaceIndex);
+		for (int i = -nLength2; i <= nLength; i++)
+		{
+			for (int j = -nLength3; j <= nLength1; j++)
+			{
+				auto node_ = node->GetNeighbourByOffset(offset * (float)i + offset2 * (float)j);
+				if(node_)
+					node_->SetFaceUsed(nFaceIndex);
+			}
+		}
+		
+		RectanglePtr rectangle(new Rectangle(node, nFaceIndex));
+		m_rectangles.push_back(rectangle);
+		rectangle->SetCornerNode(node->GetNeighbourByOffset(offset * (float)nLength - offset2 * (float)nLength3), 1);
+		rectangle->SetCornerNode(node->GetNeighbourByOffset(offset2 * (float)nLength1 + offset * (float)nLength), 2);
+		rectangle->SetCornerNode(node->GetNeighbourByOffset(-offset * (float)nLength2 + offset2 * (float)nLength1), 3);
+		rectangle->SetCornerNode(node->GetNeighbourByOffset(-offset2 * (float)nLength3 - offset * (float)nLength2), 0);
+		
+#else
+		const uint16 nVertexCount = 4;
+
+		BMaxNodePtr nodes[nVertexCount] =
+		{
+			BMaxNodePtr(node), BMaxNodePtr(node), BMaxNodePtr(node), BMaxNodePtr(node)
+		};
+
+		RectanglePtr rectangle(new Rectangle(nodes, nFaceIndex));
+		for (uint32 i = 0; i < nVertexCount; i++)
+		{
+			FindNeighbourFace(rectangle.get(), i, nFaceIndex);
+			node->SetFaceUsed(nFaceIndex);
+		}
+
+		rectangle->CloneNodes();
+		m_rectangles.push_back(rectangle);
+#endif
+	}
+
+	void BMaxParser::FindNeighbourFace(Rectangle *rectangle, uint32 i, uint32 nFaceIndex)
+	{
+		const Vector3 *directionOffsetTable = Rectangle::DirectionOffsetTable;
+		int nIndex = nFaceIndex * 4 + i;
+		PE_ASSERT(nIndex < 24);
+		const Vector3& offset = directionOffsetTable[nIndex];
+
+		int nextI = nIndex + ((i == 3) ? -3 : 1);	
+		
+		PE_ASSERT(nextI < 24);
+		BMaxNode *fromNode = rectangle->GetFromNode(nextI);
+		BMaxNode *toNode = rectangle->GetToNode(nextI);
+
+		const Vector3& nextOffset = directionOffsetTable[nextI];
+		BMaxNode *currentNode = fromNode;
+
+		vector<BMaxNodePtr>nodes;
+		
+		if (fromNode)
+		{
+			do
+			{
+				BMaxNode *neighbourNode = currentNode->GetNeighbourByOffset(offset);
+				if (!currentNode->isSolid() || neighbourNode == NULL || !neighbourNode->isSolid() || currentNode->GetColor() != neighbourNode->GetColor() || currentNode->GetBoneIndex() != neighbourNode->GetBoneIndex())
+					return;
+				BlockModel* neighbourCube = neighbourNode->GetBlockModel();
+
+				if (neighbourCube && neighbourCube->GetVerticesCount() > 0 && neighbourNode->IsFaceNotUse(nFaceIndex))
+					nodes.push_back(BMaxNodePtr(neighbourNode));
+				else
+					return;
+
+				if (currentNode == toNode)
+					break;
+				currentNode = currentNode->GetNeighbourByOffset(nextOffset);
+			} while (currentNode);
+		}
+
+		BMaxNode *newFromNode = fromNode->GetNeighbourByOffset(offset);
+		BMaxNode *newToNode = toNode->GetNeighbourByOffset(offset);
+
+		for (BMaxNodePtr nodePtr : nodes)
+		{
+			nodePtr->SetFaceUsed(nFaceIndex);
+		}
+		rectangle->UpdateNode(newFromNode, newToNode, nextI);
+		FindNeighbourFace(rectangle, i, nFaceIndex);
+	}
+
+	void BMaxParser::CalculateLod(uint32 nMaxTriangleCount)
+	{
+		/*
+		MergeCoplanerBlockFace(m_rectangles);
+		//m_originRectangles = rectangles;
+
+		if (fabs(m_fScale - 1.0f) > FLT_EPSILON)
+		{
+			for (RectanglePtr& rectangle : rectangles)
+			{
+				rectangle->ScaleVertices(m_fScale);
+			}
+		}
+
+		vector<uint32> lodTable;
+		GetLodTable(rectangles.size(), lodTable);
+		for (uint16 i = 0;i < lodTable.size();i++)
+		{
+			uint32 nextFaceCount = lodTable[i];
+			while (rectangles.size() > nextFaceCount)
+			{
+				PerformLod();
+				rectangles.clear();
+				MergeCoplanerBlockFace(rectangles);
+			}
+			if (fabs(m_fScale - 1.0f) > FLT_EPSILON)
+			{
+				for (RectanglePtr& rectangle : rectangles)
+				{
+					rectangle->ScaleVertices(m_fScale);
+				}
+			}
+			m_lodRectangles[i] = rectangles;
+		}
+		*/
+
+		//a rectangle generate two triangles
+		while (m_rectangles.size() * 2 > nMaxTriangleCount)
+		{
+			PerformLod();
+			MergeCoplanerBlockFace();
+		}
+
+	}
+
+	void BMaxParser::GetLodTable(uint32 faceCount, vector<uint32>&lodTable)
+	{
+		if (faceCount >= 4000)
+			lodTable.push_back(4000);
+		if (faceCount >= 2000)
+			lodTable.push_back(2000);
+		if (faceCount >= 500)
+			lodTable.push_back(500);
+	}
+
+	void BMaxParser::PerformLod()
+	{
+		m_nLodLevel ++;
+
+		CShapeAABB aabb;
+		map<int64, BMaxNodePtr> nodesMap;
+		
+		int width = (int)m_blockAABB.GetWidth();
+		int height = (int)m_blockAABB.GetHeight();
+		int depth = (int)m_blockAABB.GetDepth();
+
+		for (int direction = 0; direction <= 3; direction++)
+		{
+			int x = (int)m_centerPos[0];
+			while (x >= -1 && x <= width)
+			{
+				for (int y = 0; y <= height; y += 2)
+				{
+					int z = (int)m_centerPos[2];
+					while (z >= -1 && z <= depth)
+					{
+						CalculateLodNode(nodesMap, x, y, z);
+						(direction & 1) == 0 ? z += 2 : z -= 2;
+					}
+				}
+				if (direction >= 2)
+					x += 2;
+				else
+					x -= 2;
+			}
+		}
+		vector<BMaxNodePtr>nodes;
+
+		for (auto iter = nodesMap.begin();iter != nodesMap.end();iter++)
+		{
+			nodes.push_back(iter->second);
+		}
+		CalculateAABB(nodes);
+	}
+
+	void BMaxParser::CalculateAABB(vector<BMaxNodePtr>&nodes)
+	{
+		m_blockAABB.SetEmpty();
+		for (auto item : nodes)
+		{
+			BMaxNode *node = item.get();
+			m_blockAABB.Extend(Vector3((float)node->x, (float)node->y, (float)node->z));
+		}
+
+		m_centerPos = m_blockAABB.GetCenter();
+		m_centerPos.y = 0;
+		m_centerPos.x = (m_blockAABB.GetWidth() + 1.f) * 0.5f;
+		m_centerPos.z = (m_blockAABB.GetDepth() + 1.f) * 0.5f;
+
+		// OUTPUT_LOG("center %f %f %f\n", m_centerPos[0], m_centerPos[1], m_centerPos[2]);
+		const auto& vMin = m_blockAABB.GetMin();
+		int offset_x = (int)vMin.x;
+		int offset_y = (int)vMin.y;
+		int offset_z = (int)vMin.z;
+
+		m_nodes.clear();
+		for (auto node : nodes)
+		{
+			node->x -= offset_x;
+			node->y -= offset_y;
+			node->z -= offset_z;
+			InsertNode(node);
+		}
+
+		// OUTPUT_LOG("nodes count %d\n", m_nodes.size());
+		if (m_bAutoScale && m_nLodLevel == 0)
+		{
+			float fMaxLength = Math::Max(Math::Max(m_blockAABB.GetHeight(), m_blockAABB.GetWidth()), m_blockAABB.GetDepth()) + 1.f;
+			m_fScale = CalculateScale(fMaxLength);
+			if (m_bHasBoneBlock)
+			{
+				// for animated models, it is by default 1-2 blocks high, for static models, it is 0-1 block high. 
+				m_fScale *= 2.f;
+			}
+		}
+	}
+
+	void BMaxParser::CalculateLodNode(map<int64, BMaxNodePtr> &nodeMap, int x, int y, int z)
+	{
+		int32 cnt = 0;
+
+		map<int32, int32> colorMap;
+		map<int32, int32> boneMap;
+
+		for (int16 dx = 0; dx <= 1; dx++)
+		{
+			for (int16 dy = 0; dy <= 1; dy++)
+			{
+				for (int16 dz = 0; dz <= 1; dz++)
+				{
+					int16 cx = x + dx;
+					int16 cy = y + dy;
+					int16 cz = z + dz;
+
+					if (cx >= 0 && cy >= 0 && cz >= 0)
+					{
+						BMaxNode *node = GetNode(cx, cy, cz);
+						if (node)
+						{
+							cnt++;
+							bool hasFind = false;
+							int boneIndex = node->GetBoneIndex();
+							if (boneIndex >= 0)
+							{
+								BMaxFrameNode *myBone = m_bones[boneIndex].get();
+								for (auto iter = boneMap.begin(); iter != boneMap.end(); iter++)
+								{
+									BMaxFrameNode *bone = m_bones[iter->first].get();
+									if (boneIndex == iter->first || bone->IsAncestorOf(myBone))
+									{
+										iter->second++;
+										hasFind = true;
+										break;
+									}
+									else if (myBone->IsAncestorOf(bone))
+									{
+										boneMap.insert(make_pair(boneIndex, iter->second + 1));
+										boneMap.erase(iter);
+										hasFind = true;
+										break;
+									}
+								}
+								if (!hasFind)
+								{
+									boneMap.insert(make_pair(boneIndex, 1));
+								}
+							}
+
+							int32 myColor = node->GetColor();
+							auto iter = colorMap.find(myColor);
+							if (iter != colorMap.end())
+							{
+								iter->second++;
+							}
+							else
+							{
+								colorMap.insert(make_pair(myColor, 1));
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if (cnt >= 4)
+		{
+			uint16 newX = (x + 1) / 2;
+			uint16 newY = y / 2;
+			uint16 newZ = (z + 1) / 2;
+			uint64 index = GetNodeIndex(newX, newY, newZ);
+
+			BMaxNodePtr node(new BMaxNode(this, newX, newY, newZ, 0, 0));
+
+			int32 color = 0;
+			auto itColor = std::max_element(colorMap.begin(), colorMap.end(), [](const std::pair<int32, int32>& a, const std::pair<int32, int32>& b)
+			{
+				return a.second < b.second;
+			});
+
+			if (itColor != colorMap.end())
+				color = itColor->first;
+			node->SetColor(color);
+
+			int32 boneIndex = -1;
+			auto itBone = std::max_element(boneMap.begin(), boneMap.end(), [](const std::pair<int32, int32>& a, const std::pair<int32, int32>& b)
+			{
+				return a.second < b.second;
+			});
+			if (itBone != boneMap.end())
+				boneIndex = itBone->first;
+			node->SetBoneIndex(boneIndex);
+
+			if (nodeMap.find(index) == nodeMap.end())
+			{
+				nodeMap.insert(make_pair(index, node));
+			}
+		}
+	}
+
 	ModelGeoset* BMaxParser::AddGeoset()
 	{
 		ModelGeoset geoset;
@@ -361,7 +829,6 @@ namespace ParaEngine
 	ModelRenderPass* BMaxParser::AddRenderPass()
 	{
 		ModelRenderPass pass;
-		memset(&pass, 0, sizeof(ModelRenderPass));
 		pass.cull = true;
 		pass.texanim = -1;
 		pass.color = -1;
@@ -383,21 +850,75 @@ namespace ParaEngine
 		{
 			return;
 		}
+
 		ModelGeoset* geoset = AddGeoset();
 		ModelRenderPass* pass = AddRenderPass();
 		pass->geoset = geoset->id;
 
 		int32 nStartIndex = 0;
 
-		int nRootBoneIndex = FindRootBoneIndex();
 		CShapeAABB aabb;
 		int total_count = 0;
 		int nStartVertex = 0;
+
+		for (uint32 i = 0; i < m_rectangles.size(); i++)
+		{
+			Rectangle *rectangle = m_rectangles[i].get();
+			BlockVertexCompressed* pVertices = rectangle->GetVertices();
+
+			int nVertices = 4;
+			int nIndexCount = 6;
+
+			if ((nIndexCount + geoset->icount) >= 0xffff)
+			{
+				// break geoset, if it is too big
+				nStartIndex = (int32)m_indices.size();
+				geoset = AddGeoset();
+				pass = AddRenderPass();
+				pass->geoset = geoset->id;
+				pass->SetStartIndex(nStartIndex);
+				geoset->SetVertexStart(total_count);
+				nStartVertex = 0;
+			}
+
+			geoset->icount += nIndexCount;
+			pass->indexCount += nIndexCount;
+
+			uint8 vertex_weight = 0xff;
+
+			for (int k = 0; k < nVertices; k++, pVertices++)
+			{
+				ModelVertex modelVertex;
+				memset(&modelVertex, 0, sizeof(ModelVertex));
+				pVertices->GetPosition(modelVertex.pos);
+				pVertices->GetNormal(modelVertex.normal);
+		
+				modelVertex.color0 = pVertices->color2;
+				//set bone and weight, only a single bone
+				modelVertex.bones[0] = rectangle->GetBoneIndexAt(k);
+				modelVertex.weights[0] = vertex_weight;
+
+				m_vertices.push_back(modelVertex);
+				aabb.Extend(modelVertex.pos);
+			}
+
+			int start_index = nStartVertex;
+			m_indices.push_back(start_index + 0);
+			m_indices.push_back(start_index + 1);
+			m_indices.push_back(start_index + 2);
+			m_indices.push_back(start_index + 0);
+			m_indices.push_back(start_index + 2);
+			m_indices.push_back(start_index + 3);
+			total_count += nVertices;
+			nStartVertex += nVertices;
+		}
+
+		int nRootBoneIndex = 0;
 		for (uint32 i = 0; i < m_blockModels.size(); i++)
 		{
 			BlockModel* model = m_blockModels.at(i);
 			BMaxNode* node = m_blockModelsMapping[model];
-			if (!node)
+			if (!node || node->isSolid())
 				continue;
 
 			int nVertices = model->GetVerticesCount();
@@ -417,8 +938,7 @@ namespace ParaEngine
 				geoset->SetVertexStart(total_count);
 				nStartVertex = 0;
 			}
-			
-			geoset->vstart += nVertices;
+
 			geoset->icount += nIndexCount;
 			pass->indexCount += nIndexCount;
 
@@ -433,12 +953,13 @@ namespace ParaEngine
 				ModelVertex modelVertex;
 				memset(&modelVertex, 0, sizeof(ModelVertex));
 				pVertices->GetPosition(modelVertex.pos);
+				modelVertex.pos *= m_fScale;
 				pVertices->GetNormal(modelVertex.normal);
 				modelVertex.color0 = pVertices->color2;
 				//set bone and weight, only a single bone
 				modelVertex.bones[0] = nBoneIndex;
 				modelVertex.weights[0] = vertex_weight;
-				
+
 				m_vertices.push_back(modelVertex);
 				aabb.Extend(modelVertex.pos);
 			}
@@ -456,9 +977,19 @@ namespace ParaEngine
 			total_count += nVertices;
 			nStartVertex += nVertices;
 		}
+		
 		aabb.GetMin(m_minExtent);
 		aabb.GetMax(m_maxExtent);
 	}
+
+	void BMaxParser::ClearModel()
+	{
+		m_geosets.clear();
+		m_renderPasses.clear();
+		m_indices.clear();
+		m_vertices.clear();
+	}
+
 	void BMaxParser::FillParaXModelData(CParaXModel *pMesh)
 	{
 		if (pMesh == NULL)
@@ -475,9 +1006,10 @@ namespace ParaEngine
 
 		if (m_vertices.size() == 0)
 			return;
+		//pMesh->m_RenderMethod = CParaXModel::BMAX_MODEL;
+		pMesh->SetRenderMethod(CParaXModel::BMAX_MODEL);
 		pMesh->initVertices(m_vertices.size(), &(m_vertices[0]));
 		pMesh->initIndices(m_indices.size(), &(m_indices[0]));
-		pMesh->m_RenderMethod = CParaXModel::BMAX_MODEL;
 
 		if (m_bones.size() > 0)
 		{
@@ -491,13 +1023,22 @@ namespace ParaEngine
 					pBone->bUsePivot = true;
 				}
 				pMesh->bones[i] = *pBone;
+				if (pBone->nBoneID > 0)
+					pMesh->m_boneLookup[pBone->nBoneID] = i;
+				else if (pBone->IsAttachment())
+				{
+					pMesh->NewAttachment(true, pBone->GetAttachmentId(), i, pBone->bUsePivot ? pBone->pivot : Vector3::ZERO);
+				}
 			}
 		}
 
-		if (m_anims.size() > 0 && m_bones.size() > 0)
+		if (m_bones.size() > 0)
 		{
-			pMesh->anims = new ModelAnimation[m_anims.size()];
-			memcpy(pMesh->anims, &(m_anims[0]), sizeof(ModelAnimation)*m_anims.size());
+			if (m_anims.size() > 0)
+			{
+				pMesh->anims = new ModelAnimation[m_anims.size()];
+				memcpy(pMesh->anims, &(m_anims[0]), sizeof(ModelAnimation)*m_anims.size());
+			}
 			pMesh->animBones = true;
 			pMesh->animated = true;
 		}
@@ -688,7 +1229,7 @@ namespace ParaEngine
 		int x;
 		int y;
 		int z;
-		int index = GetIndexFromXmlElement(node, "frame_id", x, y, z);
+		auto index = GetIndexFromXmlElement(node, "frame_id", x, y, z);
 		if (index > -1)
 		{
 			int nIndex = 0;
@@ -933,6 +1474,20 @@ namespace ParaEngine
 		AutoAddWalkAnimation(ANIM_WALKBACKWARDS, 13000, 14000, 4.0f, false);
 	}
 
+	bool BMaxParser::IsFileNameRecursiveLoaded(const std::string& filename)
+	{
+		if (!filename.empty())
+		{
+			if (GetFilename() == filename)
+				return true;
+			else if (GetParent())
+			{
+				return GetParent()->IsFileNameRecursiveLoaded(filename);
+			}
+		}
+		return false;
+	}
+
 	void BMaxParser::AddAnimation(const ModelAnimation& anim)
 	{
 		m_anims.push_back(anim);
@@ -1000,12 +1555,12 @@ namespace ParaEngine
 			CParaFile file;
 			if (file.OpenFile(sFullFilename.c_str()))
 			{
-				BMaxParser parser(file.getBuffer(), file.getSize());
+				BMaxParser parser(file.getBuffer(), file.getSize(), sFilename.c_str(), this);
 				pModel.reset(parser.ParseParaXModel());
 			}
 			else
 			{
-				OUTPUT_LOG("warn: can not find referenced bmax file %s \n", sFullFilename.c_str());
+				OUTPUT_LOG("warn: can not find referenced bmax file %s \n", sFilename.c_str());
 			}
 
 			m_refModels[sFilename] = pModel;

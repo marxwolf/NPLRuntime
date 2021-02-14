@@ -23,7 +23,8 @@
 #include "BlockEngine/BlockWorldClient.h"
 
 #ifdef USE_OPENGL_RENDERER
-#include "cocos2d.h"
+#include "ShadowMap.h"
+#include "OpenGLWrapper.h"
 #endif
 #include "VertexDeclaration.h"
 
@@ -53,6 +54,13 @@ namespace ParaEngine
 
 	inline DWORD FtoDW( FLOAT f ) { return *((DWORD*)&f); }
 
+	static VertexElement vertexdesc_pos[] =
+	{
+		// base data (stream 0)
+		{ 0, 0, D3DDECLTYPE_FLOAT3, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0 },
+		D3DDECL_END()
+	};
+
 	static VertexElement vertexdesc_simple_mesh[]=
 	{
 		// base data (stream 0)
@@ -67,6 +75,15 @@ namespace ParaEngine
 		{ 0, 12, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0 },
 		D3DDECL_END()
 	};
+
+	static VertexElement vertex2desc_single_color[] =
+	{
+		// base data (stream 0)
+		{ 0, 0, D3DDECLTYPE_FLOAT4, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_POSITION, 0 },
+		{ 0, 16, D3DDECLTYPE_D3DCOLOR, D3DDECLMETHOD_DEFAULT, D3DDECLUSAGE_COLOR, 0 },
+		D3DDECL_END()
+	};
+
 	static VertexElement vertexdesc_particle[]=
 	{
 		// base data (stream 0)
@@ -238,9 +255,11 @@ namespace ParaEngine
 
 EffectManager::EffectManager()
 :m_nCurrentEffect(0),m_pCurrentEffect(NULL),m_bUseFog(true),m_ClipPlaneState(ClipPlane_Disabled),m_bClipPlaneEnabled(false),
-m_bDisableD3DAlphaTesting(false), m_bDisableD3DCulling(false),m_bEnableLocalLighting(true),m_bUsingShadowMap(false), 
+m_bDisableD3DAlphaTesting(false), m_bDisableD3DCulling(false), m_bEnableLocalLighting(true), m_bUsingShadowMap(false), m_bZEnable(true),
 #ifdef USE_DIRECTX_RENDERER
 m_pShadowMap(NULL), m_pGlowEffect(NULL), 
+#elif defined(USE_OPENGL_RENDERER)
+m_pShadowMap(NULL),
 #endif
 m_colorGlowness(1.0f, 1.0f, 1.0f, 1.0f), m_nGlowTechnique(0),m_bIsUsingFullScreenGlow(false),m_nMaxLocalLightsNum(4),
 m_bEnableReflectionRendering(true),m_pScene(NULL), m_nEffectLevel(30), m_bEffectValid(true), m_bDisableZWrite(false),m_pWaveEffect(NULL),
@@ -267,8 +286,10 @@ void EffectManager::Cleanup()
 	m_pCurrentEffect = NULL;
 	m_HandleMap.clear();
 	AssetManager <CEffectFile>::Cleanup();
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	SAFE_DELETE(m_pShadowMap);
+#endif
+#ifdef USE_DIRECTX_RENDERER
 	SAFE_DELETE(m_pGlowEffect);
 	SAFE_DELETE(m_pWaveEffect);
 #endif
@@ -288,7 +309,7 @@ int EffectManager::GetMaxLocalLightsNum()
 
 CShadowMap* EffectManager::GetShadowMap()
 {
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	if (m_pShadowMap == 0)
 	{
 		m_pShadowMap = new CShadowMap();
@@ -425,7 +446,7 @@ WaveEffect* EffectManager::GetScreenWaveEffect()
 
 EffectManager::EffectTechniques EffectManager::GetCurrentEffectTechniqueType()
 {
-#ifdef USE_DIRECTX_RENDERER
+//#ifdef USE_DIRECTX_RENDERER
 	if(m_pCurrentEffect == 0)
 		return EFFECT_FIXED_FUNCTION;
 	else
@@ -441,16 +462,18 @@ EffectManager::EffectTechniques EffectManager::GetCurrentEffectTechniqueType()
 			break;
 		}
 	}
-#else
-	return EFFECT_DEFAULT;
-#endif
+//#else
+	//return EFFECT_DEFAULT;
+//#endif
 }
 
 void EffectManager::RestoreDeviceObjects()
 {
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	if(m_pShadowMap!=0)
 		m_pShadowMap->RestoreDeviceObjects();
+#endif
+#ifdef USE_DIRECTX_RENDERER
 	if(m_pGlowEffect!=0)
 		m_pGlowEffect->RestoreDeviceObjects();
 	if(m_pWaveEffect!=0)
@@ -461,9 +484,11 @@ void EffectManager::RestoreDeviceObjects()
 
 void EffectManager::InvalidateDeviceObjects()
 {
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	if(m_pShadowMap!=0)
 		m_pShadowMap->InvalidateDeviceObjects();
+#endif
+#ifdef USE_DIRECTX_RENDERER
 	if(m_pGlowEffect!=0)
 		m_pGlowEffect->InvalidateDeviceObjects();
 	if(m_pWaveEffect != 0)
@@ -543,7 +568,7 @@ bool EffectManager::IsUsingShadowMap()
 
 const Matrix4* EffectManager::GetTexViewProjMatrix()
 {
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	if(m_pShadowMap!=0)
 	{
 		return m_pShadowMap->GetTexViewProjMatrix();
@@ -661,6 +686,20 @@ void EffectManager::EnableZWrite( bool bZWriteEnabled )
 	}
 }
 
+void EffectManager::EnableZTest(bool bEnable, bool bForceSet /*= false*/)
+{
+	if (m_bZEnable != bEnable || bForceSet)
+	{
+		m_bZEnable = bEnable;
+		CGlobals::GetRenderDevice()->SetRenderState(D3DRS_ZENABLE, m_bZEnable ? TRUE : FALSE);
+	}
+}
+
+bool EffectManager::IsZTestEnabled()
+{
+	return m_bZEnable;
+}
+
 bool EffectManager::IsClipPlaneEnabled()
 {
 	return m_bClipPlaneEnabled;
@@ -762,6 +801,29 @@ VertexDeclarationPtr EffectManager::GetVertexDeclaration(int nIndex)
 		else
 		{
 			OUTPUT_LOG("error: CreateVertexDeclaration failed for S0_POS_COLOR\n");
+		}
+		break;
+	
+	case S0_POS2_COLOR:
+		if (SUCCEEDED(pd3dDevice->CreateVertexDeclaration(vertex2desc_single_color, &pDecl)))
+		{
+			m_pVertexDeclarations[S0_POS2_COLOR] = pDecl;
+		}
+		else
+		{
+			OUTPUT_LOG("error: CreateVertexDeclaration failed for S0_POS2_COLOR\n");
+		}
+		break;
+
+
+	case S0_POS:
+		if (SUCCEEDED(pd3dDevice->CreateVertexDeclaration(vertexdesc_pos, &pDecl)))
+		{
+			m_pVertexDeclarations[S0_POS] = pDecl;
+		}
+		else
+		{
+			OUTPUT_LOG("error: CreateVertexDeclaration failed for S0_POS\n");
 		}
 		break;
 	case S0_S1_OCEAN_CLOUD:
@@ -1075,7 +1137,7 @@ void EffectManager::applyLocalLightingData()
 void EffectManager::applyObjectLocalLighting(CBaseObject* pObj)
 {
 #ifdef USE_DIRECTX_RENDERER
-	if(IsLocalLightingEnabled() && CGlobals::GetLightManager()->GetNumLights()>0)
+	if (IsLocalLightingEnabled() && CGlobals::GetLightManager()->GetNumLights()>0)
 	{
 		//////////////////////////////////////////////////////////////////////////
 		// Do local lighting: find nearby lights, and enable them.
@@ -1208,7 +1270,7 @@ bool EffectManager::BeginEffectFF(int nHandle)
 			pd3dDevice->SetTextureStageState( 0, D3DTSS_ALPHAOP, D3DTOP_SELECTARG1 );
 			pd3dDevice->SetTextureStageState( 0, D3DTSS_ALPHAARG1, D3DTA_DIFFUSE );
 
-			pd3dDevice->SetRenderState( D3DRS_ZENABLE,          FALSE );
+			pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE); m_bZEnable = false;
 			pd3dDevice->SetRenderState( D3DRS_ZWRITEENABLE,     FALSE );
 			pd3dDevice->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );
 			pd3dDevice->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
@@ -1254,7 +1316,7 @@ bool EffectManager::BeginEffectFF(int nHandle)
 		pd3dDevice->SetRenderState( D3DRS_FOGENABLE,      FALSE);
 		pd3dDevice->SetTexture(0, NULL);
 		
-		pd3dDevice->SetRenderState( D3DRS_ZENABLE,          FALSE );
+		pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE); m_bZEnable = false;
 		pd3dDevice->SetRenderState( D3DRS_ZWRITEENABLE,     FALSE );
 		pd3dDevice->SetRenderState( D3DRS_ALPHABLENDENABLE, TRUE );
 		pd3dDevice->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
@@ -2046,7 +2108,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 		pd3dDevice->SetIndices(0);
 		pd3dDevice->SetStreamSource(0, 0, 0, 0);
 		pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-		pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
+		pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);m_bZEnable = false;
 		// Note by Xizhi: always enable zwrite otherwise z-clear will not working when cocos clear the zbuffer in the outer loop. 
 		pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 		pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
@@ -2090,7 +2152,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 			pd3dDevice->SetStreamSource(0, 0, 0, 0);
 			pd3dDevice->SetVertexDeclaration(pDecl);
 			pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-			pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
+			pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);m_bZEnable = false;
 			// Note by Xizhi: always enable zwrite otherwise z-clear will not working when cocos clear the zbuffer in the outer loop. 
 			pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 			pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
@@ -2111,7 +2173,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 		pd3dDevice->SetStreamSource(0,0,0,0);
 		pd3dDevice->SetVertexDeclaration(pDecl);
 		pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
-		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);
+		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);m_bZEnable = true;
 		pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 		pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
 		pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
@@ -2140,7 +2202,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 	}
 	case TECH_BLOCK:
 	{
-		pEffect->use();
+		pEffect->use(GetScene()->IsShadowMapEnabled()?1:0);
 		pEffect->EnableAlphaBlending(false);
 		pEffect->EnableAlphaTesting(false);
 		pd3dDevice->SetSamplerState( 0, D3DSAMP_ADDRESSU,  D3DTADDRESS_WRAP );
@@ -2148,7 +2210,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 		SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT, true);
 		SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT, true);
 		pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
-		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);
+		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);m_bZEnable = true;
 		pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 		pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
 		pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
@@ -2190,7 +2252,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 		SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR, true);
 		SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR, true);
 		pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_NONE);
-		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);
+		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);m_bZEnable = true;
 		pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
 		pd3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
 		pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
@@ -2216,7 +2278,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 		SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_POINT, true);
 		SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_POINT, true);
 		pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
-		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);
+		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);m_bZEnable = true;
 		pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, FALSE);
 		pd3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, TRUE);
 		pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
@@ -2243,7 +2305,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 			SetSamplerState(0, D3DSAMP_MINFILTER, D3DTEXF_LINEAR, true);
 			SetSamplerState(0, D3DSAMP_MAGFILTER, D3DTEXF_LINEAR, true);
 			pd3dDevice->SetRenderState(D3DRS_CULLMODE, D3DCULL_CCW);
-			pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);
+			pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);m_bZEnable = true;
 			pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 			pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_SRCALPHA);
 			pd3dDevice->SetRenderState(D3DRS_DESTBLEND, D3DBLEND_INVSRCALPHA);
@@ -2283,7 +2345,7 @@ bool EffectManager::BeginEffectShader(int nHandle, CEffectFile** pOutEffect)
 		pEffect->applySurfaceMaterial(&matTerrain);
 
 		SetCullingMode(true);
-		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);
+		pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE);m_bZEnable = true;
 		pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 		pd3dDevice->SetRenderState(D3DRS_ALPHATESTENABLE, FALSE);
 		pd3dDevice->SetRenderState(D3DRS_SRCBLEND, D3DBLEND_ONE);
@@ -2373,8 +2435,8 @@ void EffectManager::EndEffect()
 			break;
 		case TECH_OCEAN_UNDERWATER:
 			// Restore render states
-			pd3dDevice->SetRenderState( D3DRS_ZENABLE,          TRUE );
-			pd3dDevice->SetRenderState( D3DRS_ZWRITEENABLE,     TRUE );
+			pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE); m_bZEnable = true;
+			pd3dDevice->SetRenderState(D3DRS_ZWRITEENABLE, TRUE);
 			pd3dDevice->SetRenderState( D3DRS_FOGENABLE,        GetScene()->IsFogEnabled() );
 			pd3dDevice->SetTextureStageState( 0, D3DTSS_ALPHAARG1, D3DTA_TEXTURE );
 			break;
@@ -2389,7 +2451,7 @@ void EffectManager::EndEffect()
 			pd3dDevice->SetRenderState( D3DRS_ZWRITEENABLE, TRUE );
 			break;
 		case TECH_GUI:
-			pd3dDevice->SetRenderState( D3DRS_ZENABLE,          TRUE );
+			pd3dDevice->SetRenderState(D3DRS_ZENABLE, TRUE); m_bZEnable = true;
 			pd3dDevice->SetRenderState( D3DRS_ZWRITEENABLE,     TRUE );
 			pd3dDevice->SetRenderState( D3DRS_FOGENABLE,        GetScene()->IsFogEnabled() );
 			break;
@@ -2578,7 +2640,7 @@ void EffectManager::EndEffect()
 
 void EffectManager::SetAllEffectsTechnique(EffectTechniques nTech)
 {
-#ifdef USE_DIRECTX_RENDERER
+//#ifdef USE_DIRECTX_RENDERER
 	EndEffect();
 	switch(nTech)
 	{
@@ -2599,7 +2661,7 @@ void EffectManager::SetAllEffectsTechnique(EffectTechniques nTech)
 		}
 		break;
 	}
-#endif
+//#endif
 }
 
 void EffectManager::SetDefaultEffectMapping(int nLevel)

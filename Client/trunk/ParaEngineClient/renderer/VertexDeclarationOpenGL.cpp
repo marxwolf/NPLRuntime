@@ -7,9 +7,8 @@
 //-----------------------------------------------------------------------------
 #include "ParaEngine.h"
 #if defined (USE_OPENGL_RENDERER) || defined (USE_NULL_RENDERER)
-#ifdef PARAENGINE_MOBILE
-#include "cocos2d.h"
-USING_NS_CC;
+#ifdef USE_OPENGL_RENDERER
+#include "OpenGLWrapper.h"
 #endif
 #include "VertexDeclarationOpenGL.h"
 using namespace ParaEngine;
@@ -27,7 +26,7 @@ bool ParaEngine::VertexElement::IsEndDeclare() const
 
 uint32 ParaEngine::VertexElement::GetSize() const
 {
-	if (Type == D3DDECLTYPE_FLOAT3)
+	if (Type == D3DDECLTYPE_FLOAT4)
 		return 16;
 	else if (Type == D3DDECLTYPE_FLOAT3)
 		return 12;
@@ -61,7 +60,7 @@ void ParaEngine::CVertexDeclaration::Release()
 
 void ParaEngine::CVertexDeclaration::ApplyAttribute(const void* pVertexStreamZeroData)
 {
-#ifdef PARAENGINE_MOBILE
+#ifdef USE_OPENGL_RENDERER
 	int nTextureIndex = 0;
 	int nColorIndex = 0;
 	for (auto elem : m_elements)
@@ -70,11 +69,13 @@ void ParaEngine::CVertexDeclaration::ApplyAttribute(const void* pVertexStreamZer
 		{
 			if (elem.Type == D3DDECLTYPE_FLOAT3)
 				glVertexAttribPointer(GLProgram::VERTEX_ATTRIB_POSITION, 3, GL_FLOAT, GL_FALSE, m_nSize, OFFSET_OF(pVertexStreamZeroData, elem.Offset));
+			else if (elem.Type == D3DDECLTYPE_FLOAT4)
+				glVertexAttribPointer(GLProgram::VERTEX_ATTRIB_POSITION, 4, GL_FLOAT, GL_FALSE, m_nSize, OFFSET_OF(pVertexStreamZeroData, elem.Offset));
 		}
 		else if (elem.Usage == D3DDECLUSAGE_COLOR)
 		{
 			// Please note: opengl packed color as RGBA in original byte ordering
-			// however directX packed color as BGRA, we will need to swizzle the B and R in color component. 
+			// however directX packed color as BGRA, we will need to swizzle the B and R in color component.
 			if (elem.Type == D3DDECLTYPE_D3DCOLOR)
 			{
 				if (nColorIndex == 0)
@@ -102,14 +103,14 @@ void ParaEngine::CVertexDeclaration::ApplyAttribute(const void* pVertexStreamZer
 
 void ParaEngine::CVertexDeclaration::EnableAttribute()
 {
-#ifdef PARAENGINE_MOBILE
+#ifdef USE_OPENGL_RENDERER
 	GL::enableVertexAttribs(m_dwAttributes);
 #endif
 }
 
 void ParaEngine::CVertexDeclaration::SetVertexElement(const VertexElement* elems)
 {
-#ifdef PARAENGINE_MOBILE
+#ifdef USE_OPENGL_RENDERER
 	m_nSize = 0;
 	m_dwAttributes = 0;
 	m_elements.clear();

@@ -30,7 +30,8 @@ namespace ParaEngine
 		ATTRIBUTE_METHOD1(Bone, IsBillBoarded_s, bool*)		{ *p1 = cls->IsBillBoarded(); return S_OK; }
 		ATTRIBUTE_METHOD1(Bone, IsPivotBone_s, bool*)		{ *p1 = cls->IsPivotBone(); return S_OK; }
 		ATTRIBUTE_METHOD1(Bone, IsOffsetMatrixBone_s, bool*){ *p1 = cls->IsOffsetMatrixBone(); return S_OK; }
-		ATTRIBUTE_METHOD1(Bone, IsStaticTransform_s, bool*)	{ *p1 = cls->IsStaticTransform(); return S_OK; }
+		ATTRIBUTE_METHOD1(Bone, IsTransformationNode_s, bool*)	{ *p1 = cls->IsTransformationNode(); return S_OK; }
+		ATTRIBUTE_METHOD1(Bone, IsStaticTransform_s, bool*) { *p1 = cls->IsStaticTransform(); return S_OK; }
 		ATTRIBUTE_METHOD1(Bone, IsAnimated_s, bool*)		{ *p1 = cls->IsAnimated(); return S_OK; }
 
 		ATTRIBUTE_METHOD1(Bone, SetOffsetMatrix_s, const Matrix4&)		{ cls->SetOffsetMatrix(p1); return S_OK; }
@@ -73,6 +74,8 @@ namespace ParaEngine
 		bool IsOffsetMatrixBone() const { return (flags & BONE_OFFSET_MATRIX) != 0; };
 		/** whether the bone has no animation and a static transform is used to transform from current bone space to its parent bone space. */
 		bool IsStaticTransform() const { return (flags & BONE_STATIC_TRANSFORM) != 0; };
+		/** whether the bone is transformation node */
+		bool IsTransformationNode() const { return (flags & BONE_TRANSFORMATION_NODE) != 0; };
 
 		/** calling this function means that you want to use BONE_OFFSET_MATRIX for final bone matrix calculation. */
 		void SetOffsetMatrix(const Matrix4& mat);
@@ -80,7 +83,10 @@ namespace ParaEngine
 		/** calling this function means that you want to use BONE_STATIC_TRANSFORM for final bone matrix calculation. */
 		void SetStaticTransform(const Matrix4& mat);
 
-		const std::string& GetName();
+		/** whether the bone contains animation data. */
+		bool CheckHasAnimation();
+
+		const std::string& GetName() const;
 		void SetName(const std::string& val);
 
 		/** automatically set bone id from bone name. */
@@ -128,7 +134,9 @@ namespace ParaEngine
 		int GetParentIndex() const { return parent; }
 		int GetBoneIndex() const { return nIndex; }
 		int GetBoneID() const { return nBoneID; }
-		int IsAttachment() const { return nBoneID < 0; }
+		int IsAttachment() const;
+		/** return -1 if it is not attachment id. of it is non-negative attachment id */
+		int GetAttachmentId() const;
 		void SetBoneID(int val) { nBoneID = val; }
 
 		const ParaEngine::Quaternion& GetFinalRot() const;
@@ -144,6 +152,11 @@ namespace ParaEngine
 		/** similar to GetFinalRotMatrix(), except that it will remove rotation in its offset matrix. */
 		Matrix4 GetPivotRotMatrix();
 		
+		/** mark this bone as un-calculated bone. 
+		* @param bForce: if false(default), Static and transformation node are never dirty. 
+		*/
+		void MakeDirty(bool bForce = false);
+
 		friend class CBVHSerializer;
 	public:
 		enum BONE_FLAGS
@@ -160,6 +173,8 @@ namespace ParaEngine
 			BONE_OFFSET_MATRIX = (0x1 << 4),
 			/** the bone has no animation and a static transform is used to transform from current bone space to its parent bone space.  */
 			BONE_STATIC_TRANSFORM = (0x1 << 5),
+			/* the bone is the transformation node */
+			BONE_TRANSFORMATION_NODE = (0x1 << 6),
 		};
 		std::string	m_sIdentifer;
 		std::string	m_sRotName;

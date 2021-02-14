@@ -8,7 +8,7 @@
 //-----------------------------------------------------------------------------
 #include "ParaEngine.h"
 #ifdef USE_OPENGL_RENDERER
-#include "cocos2d.h"
+#include "OpenGLWrapper.h"
 #include "StringHelper.h"
 #include "2dengine/GUIBase.h"
 #include "2dengine/FontRendererOpenGL.h"
@@ -16,7 +16,6 @@
 #include "memdebug.h"
 
 using namespace ParaEngine;
-USING_NS_CC;
 
 SpriteFontEntityOpenGL::SpriteFontEntityOpenGL(const AssetKey& key)
 :SpriteFontEntity(key), m_fontRenderer(NULL)
@@ -33,7 +32,7 @@ SpriteFontEntityOpenGL::~SpriteFontEntityOpenGL()
 
 void ParaEngine::SpriteFontEntityOpenGL::Cleanup()
 {
-	CC_SAFE_RELEASE_NULL(m_fontRenderer);
+	SAFE_RELEASE(m_fontRenderer);
 }
 
 HRESULT ParaEngine::SpriteFontEntityOpenGL::DrawTextW(CSpriteRenderer* pSprite, const char16_t* strText, int nCount, RECT* rect, DWORD dwTextFormat, DWORD textColor)
@@ -57,16 +56,17 @@ HRESULT ParaEngine::SpriteFontEntityOpenGL::InitDeviceObjects()
 	if (m_bIsInitialized)
 		return S_OK;
 	m_bIsInitialized = true;
-	CC_SAFE_RELEASE(m_fontRenderer);
+	SAFE_RELEASE(m_fontRenderer);
 	m_fontRenderer = CFontRendererOpenGL::create(GetFontName(), GetFontSize());
-	CC_SAFE_RETAIN(m_fontRenderer);
+	if(m_fontRenderer)
+		m_fontRenderer->addref();
 	return S_OK;
 }
 
 HRESULT ParaEngine::SpriteFontEntityOpenGL::DeleteDeviceObjects()
 {
 	m_bIsInitialized = false;
-	CC_SAFE_RELEASE_NULL(m_fontRenderer);
+	SAFE_RELEASE(m_fontRenderer);
 	return S_OK;
 }
 

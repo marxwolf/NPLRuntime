@@ -9,8 +9,10 @@
 // Cross-platform type definitions
 #ifdef WIN32
 #ifndef PARAENGINE_CLIENT
+#ifndef WIN32_LEAN_AND_MEAN
 /* Prevent inclusion of winsock.h in windows.h, otherwise boost::Asio will produce error in ParaEngineServer project: WinSock.h has already been included*/ 
 #define WIN32_LEAN_AND_MEAN    
+#endif
 #endif
 #include <windows.h>
 #include <stdio.h>
@@ -23,7 +25,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <stdarg.h>
-#if (defined PARA_TARGET_PLATFORM) && (PARA_TARGET_PLATFORM == PARA_PLATFORM_IOS || PARA_TARGET_PLATFORM == PARA_PLATFORM_MAC )
+#if (defined(__APPLE__)) || ((defined PARA_TARGET_PLATFORM) && (PARA_TARGET_PLATFORM == PARA_PLATFORM_IOS || PARA_TARGET_PLATFORM == PARA_PLATFORM_MAC ))
 #include <malloc/malloc.h>
 #else
 #include <malloc.h>

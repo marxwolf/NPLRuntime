@@ -129,6 +129,10 @@ HRESULT CSkyMesh::Draw(SceneState * sceneState)
 					pEffectFile->applyFogParameters((m_fFogBlendAngleFrom < m_fFogBlendAngleTo) && sceneState->GetScene()->IsFogEnabled(), &fogParam, &fogColor);
 					pEffectFile->setParameter(CEffectFile::k_ConstVector0, &GetSkyColorFactor());
 
+					// enable texture wrapping for sub module
+					CGlobals::GetRenderDevice()->SetSamplerState(0, D3DSAMP_ADDRESSU, D3DTADDRESS_WRAP);
+					CGlobals::GetRenderDevice()->SetSamplerState(0, D3DSAMP_ADDRESSV, D3DTADDRESS_WRAP);
+
 					for (auto& child : GetChildren())
 					{
 						child->SetPosition(vPos);
@@ -792,7 +796,7 @@ void ParaEngine::CSkyMesh::DrawStaticMeshSkyInner(SceneState * sceneState)
 
 		// get world transform matrix
 		Matrix4 mxWorld;
-		m_pStaticMesh->GetRenderWorldMatrix(&mxWorld);
+		m_pStaticMesh->GetRenderMatrix(mxWorld);
 		m_pStaticMesh->DrawInner(sceneState, &mxWorld, sceneState->GetCameraToCurObjectDistance());
 	}
 }

@@ -16,6 +16,7 @@ namespace ParaEngine
 			bUseCubicMap = false;
 			bDisableZWrite = false;
 			bDisablePhysics = false;
+			bForcePhysics = false;
 			bForceLocalTranparency = false;
 			fReflectivity = 1.0f;
 			fAlphaTestingRef = 0.5f;
@@ -25,17 +26,24 @@ namespace ParaEngine
 			bBillboard = false;
 			bAABillboard = false;
 			nForceUnique = 0;
+			m_nCategoryID = 0;
 			bRGBOnlyUVAnim = false;
 			bRotateParticle2SpeedVector = false;
 			fStripLenght = 0;
 			bFacegroupSknningAni = false;
 			nIndex = -1;
+			m_nOrder = 0;
 		}
 	public:
 		bool isAlphaBlended() {return fAlphaTestingRef == 0.f; }
 		const std::string& GetFileName() { return m_filename; };
 
 		operator const std::string& () { return m_filename; }
+
+		/* material category id, may be used by some deferred shading shader. default to 0*/
+		int32 GetCategoryID() const { return m_nCategoryID; }
+		void SetCategoryID(int32 val) { m_nCategoryID = val; }
+
 	public:
 		std::string m_filename;
 		// LiXizhi added
@@ -59,8 +67,10 @@ namespace ParaEngine
 		bool bDisableZWrite;
 		// if this is true, we will not sort transparent mesh(with bDisableZWrite) globally, instead it will only be sorted per mesh, hence greatly increased rendering speed. 
 		bool bForceLocalTranparency;
-		// if true, it contains physics of this material will be disabled.
+		// if true, physics of this material will be disabled.
 		bool bDisablePhysics;
+		// if true, we will force physics and ignore all physics from other materials 
+		bool bForcePhysics;
 		// reflection or environment map's reflectivity
 		float fReflectivity;
 		// alpha testing threshold, if this is 0, alpha testing is disabled. if this is 0.5, alpha testing is enabled. 
@@ -78,7 +88,7 @@ namespace ParaEngine
 		bool bBillboard;
 		// axis aligned billboard, always up. 
 		bool bAABillboard;
-		//rotate particle aligen
+		//rotate particle align
 		bool bRotateParticle2SpeedVector;
 
 		//for fixed texture trip animaiton;
@@ -89,6 +99,10 @@ namespace ParaEngine
 		// this will force this material to be unique, since the exporter will materials with the same parameter. 
 		int nForceUnique;
 
+		/* material category id, may be used by some deferred shading shader. default to 0*/
+		int32 m_nCategoryID;
+		int32 m_nOrder;
+		
 		int nIndex; // index of the material, -1 means no texture associated. 
 
 		// the model transparency animation block. 

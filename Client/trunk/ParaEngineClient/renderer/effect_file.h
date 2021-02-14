@@ -6,16 +6,17 @@
 #include "LightManager.h"
 #include "ParameterBlock.h"
 #include "EffectFileHandles.h"
+#include "IObjectScriptingInterface.h"
 
 namespace ParaEngine
 {
 	using namespace std;
 	class CSunLight;
 
-	/**	
+	/**
 	* asset entity: CEffectFile
 	*/
-	class CEffectFileBase : public AssetEntity
+	class CEffectFileBase : public AssetEntity,public IObjectScriptingInterface
 	{
 	public:
 		const static int MAX_EFFECT_LIGHT_NUM = 4;
@@ -50,7 +51,7 @@ namespace ParaEngine
 			k_viewProjMatrix,
 			k_TexWorldViewProjMatrix,
 			k_skyBoxMatrix,
-			
+
 
 			// parameters
 			k_first_parameter,
@@ -96,20 +97,20 @@ namespace ParaEngine
 			k_specularPower, // specular scaler
 			k_texCoordOffset, // vector
 			k_opacity, // scaler
-			k_shadowFactor, //shadow factor, float2(x,1-x) 
+			k_shadowFactor, //shadow factor, float2(x,1-x)
 			k_transitionFactor,
-			/** 
-			boolean constants are for static branching, 
-			 - Boolean0-3 is reserved for lights. 
-			 - Boolean4 is reserved for environment mapping. 
+			/**
+			boolean constants are for static branching,
+			 - Boolean0-3 is reserved for lights.
+			 - Boolean4 is reserved for environment mapping.
 			 - Boolean5 is reserved for reflection mapping
 			 - Boolean6 is reserved for normal mapping
-			 - Boolean 8,9 is reserved for shadow mapping. 
+			 - Boolean 8,9 is reserved for shadow mapping.
 			 - Other booleans can be used where necessary
 			*/
 			k_bAlphaTesting,
 			k_bAlphaBlending,
-			k_bBoolean0, 
+			k_bBoolean0,
 			k_bBoolean1,
 			k_bBoolean2,
 			k_bBoolean3,
@@ -167,6 +168,11 @@ namespace ParaEngine
 
 			// last one
 			k_max_param_handles
+		};
+
+		enum CallBackType
+		{
+			Type_DrawPass
 		};
 
 		/** a technique description */
@@ -242,8 +248,8 @@ namespace ParaEngine
 		void CommitChanges() {};
 		void EndPass(bool bForceEnd = false) {};
 		void end(bool bForceEnd = false) {};
-		
-		bool LoadBuildinShader() {};
+
+		bool LoadBuildinShader() { return true; };
 
 		/**
 		* @param nPass: -1 to release all
@@ -303,13 +309,15 @@ namespace ParaEngine
 		bool SetTechniqueByIndex(int nIndex) { return false; };
 		/** get the current technique description. This function may return NULL*/
 		const TechniqueDesc* GetCurrentTechniqueDesc() { return NULL; };
+
+		void onDrawPass(CParameterBlock* pMaterialParams,int passIndex);
 	};
-} 
+}
 
 #ifdef USE_DIRECTX_RENDERER
 #include "effect_file_DirectX.h"
 #elif defined(USE_OPENGL_RENDERER)
-#include "effect_file_OpenGL.h"	
+#include "effect_file_OpenGL.h"
 #else
 namespace ParaEngine{
 	class CEffectFile : public CEffectFileBase {

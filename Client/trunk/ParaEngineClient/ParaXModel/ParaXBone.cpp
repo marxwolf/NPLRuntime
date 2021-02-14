@@ -69,10 +69,21 @@ bool Bone::calcMatrix(Bone *allbones, const AnimIndex & CurrentAnim, const AnimI
 {
 	if (calc)
 		return true;
+	calc = true;
 	if (!CurrentAnim.IsValid())
 	{
 		if (rot.used || scale.used || trans.used)
 			return false;
+	}
+	if (IsStaticTransform() && IsTransformationNode())
+	{
+		if (parent >= 0) {
+			allbones[parent].calcMatrix(allbones, CurrentAnim, BlendingAnim, blendingFactor, pAnimInstance);
+			mat = matTransform * allbones[parent].mat;
+		}
+		else
+			mat = matTransform;
+		return true;
 	}
 
 	if (!BlendingAnim.IsValid())
@@ -133,6 +144,8 @@ bool Bone::calcMatrix(Bone *allbones, const AnimIndex & CurrentAnim, const AnimI
 	Quaternion q;
 	Vector3 tr(0, 0, 0);
 	Vector3 sc(1.f, 1.f, 1.f);
+	
+	
 	if (pCurBone == NULL && pBlendBone == NULL)
 	{
 		//////////////////////////////////////////////////////////////////////////
@@ -560,7 +573,6 @@ bool Bone::calcMatrix(Bone *allbones, const AnimIndex & CurrentAnim, const AnimI
 	SetFinalRot(q);
 	SetFinalTrans(tr);
 	SetFinalScaling(sc);
-	calc = true;
 	return true;
 }
 
@@ -840,8 +852,7 @@ void ParaEngine::Bone::AutoSetBoneInfoFromName()
 	else if (StringHelper::StrEndsWith(sName, "mount") || StringHelper::StrEndsWith(sName, "shield"))
 	{
 		// Default Mount or shield position
-		int nAttID = ATT_ID_SHIELD;
-		SetBoneID(-ATT_ID_SHIELD);
+		SetBoneID(-ATT_ID_MOUNT00);
 	}
 	else if (StringHelper::StrEndsWith(sName, "mount?") || StringHelper::StrEndsWith(sName, "mount??"))
 	{
@@ -854,7 +865,7 @@ void ParaEngine::Bone::AutoSetBoneInfoFromName()
 		if (c >= '0' && c <= '9')
 			nMountBoneIndex = (c - '0') * 10 + nMountBoneIndex;
 
-		int nAttID = ATT_ID_SHIELD;
+		int nAttID = ATT_ID_MOUNT00;
 		if (nMountBoneIndex >= 1 && nMountBoneIndex <= 99)
 		{
 			nAttID = ATT_ID_MOUNT1 + (nMountBoneIndex - 1);
@@ -993,7 +1004,7 @@ void ParaEngine::Bone::SetOffsetMatrix(const Matrix4& mat)
 	bUsePivot = false;
 }
 
-const std::string& ParaEngine::Bone::GetName()
+const std::string& ParaEngine::Bone::GetName() const
 {
 	return m_sIdentifer;
 }
@@ -1003,6 +1014,11 @@ void ParaEngine::Bone::SetStaticTransform(const Matrix4& mat)
 	matTransform = mat;
 	flags |= BONE_STATIC_TRANSFORM;
 	bUsePivot = false;
+}
+
+bool ParaEngine::Bone::CheckHasAnimation()
+{
+	return !(IsStaticTransform() || (!scale.CheckIsAnimated() && !trans.CheckIsAnimated() && !rot.CheckIsAnimated()));
 }
 
 bool ParaEngine::Bone::IsAnimated()
@@ -1088,6 +1104,16 @@ ParaEngine::Vector3 ParaEngine::Bone::GetAnimatedPivotPoint()
 	}
 }
 
+int ParaEngine::Bone::IsAttachment() const
+{
+	return nBoneID < 0;
+}
+
+int ParaEngine::Bone::GetAttachmentId() const
+{
+	return nBoneID < 0 ? ((-nBoneID == ATT_ID_MOUNT00) ? 0 : -nBoneID) : -1;
+}
+
 const ParaEngine::Quaternion& ParaEngine::Bone::GetFinalRot() const
 {
 	return m_finalRot;
@@ -1139,6 +1165,11 @@ ParaEngine::Matrix4 ParaEngine::Bone::GetPivotRotMatrix()
 	}
 }
 
+void ParaEngine::Bone::MakeDirty(bool bForce)
+{
+	calc = false;
+}
+
 const std::string& ParaEngine::Bone::GetRotName()
 {
 
@@ -1179,6 +1210,8 @@ int ParaEngine::Bone::InstallFields(CAttributeClass* pClass, bool bOverride)
 	pClass->AddField("IsPivotBone", FieldType_Bool, (void*)0, (void*)IsPivotBone_s, NULL, "", bOverride);
 	pClass->AddField("IsOffsetMatrixBone", FieldType_Bool, (void*)0, (void*)IsOffsetMatrixBone_s, NULL, "", bOverride);
 	pClass->AddField("IsStaticTransform", FieldType_Bool, (void*)0, (void*)IsStaticTransform_s, NULL, "", bOverride);
+	pClass->AddField("IsTransformationNode", FieldType_Bool, (void*)0, (void*)IsTransformationNode_s, NULL, "", bOverride);
+
 	pClass->AddField("IsAnimated", FieldType_Bool, (void*)0, (void*)IsAnimated_s, NULL, "", bOverride);
 	pClass->AddField("OffsetMatrix", FieldType_Matrix4, (void*)SetOffsetMatrix_s, (void*)0, NULL, "", bOverride);
 	pClass->AddField("SetStaticTransform", FieldType_Matrix4, (void*)SetStaticTransform_s, (void*)0, NULL, "", bOverride);

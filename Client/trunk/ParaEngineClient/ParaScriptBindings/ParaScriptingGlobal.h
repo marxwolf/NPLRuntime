@@ -18,6 +18,7 @@ namespace ParaScripting
 {
 	class ParaObject;
 	class ParaUIObject;
+	class ParaAttributeObject;
 
 	/**
 	* this is for luabinding a pointer object on lua stack, instead of invoking new operator each time an object is created. 
@@ -193,6 +194,9 @@ namespace ParaScripting
 		* this is mainly used for writing test cases. Where a return value of 0 means success, any other value means failure. 
 		*/
 		static void Exit(int nReturnCode);
+
+		/** select a given attribute object. this is a static function*/
+		static void SelectAttributeObject(const ParaAttributeObject& obj);
 
 		/** 
 		* write const char* to console, usually for debugging purposes.
@@ -464,6 +468,7 @@ namespace ParaScripting
 		/** get the attribute object. This function return a clone of this object. */
 		ParaAttributeObject GetAttributeObject();
 
+
 		/**
 		* return true, if this object is the same as the given object.
 		*/
@@ -577,6 +582,8 @@ namespace ParaScripting
 			if field type is vectorN, return a table with N items.Please note table index start from 1
 		*/
 		object GetField(const char*  sFieldname, const object& output);
+
+		object GetField2(const char* sFieldname, lua_State* L);
 		/** similar to GetField(). except that the output is a string. 
 		Used for API exporting. not thread safe. */
 		const char* GetStringField(const char*  sFieldname);

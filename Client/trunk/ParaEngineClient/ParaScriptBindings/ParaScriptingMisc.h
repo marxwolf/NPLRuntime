@@ -30,23 +30,46 @@ namespace ParaScripting
 		* @param str: the string to use
 		* @param nFrom: character index beginning from 1. 
 		*/
-		static string UniSubString(const char* str, int nFrom, int nTo);
+		static std::string UniSubString(const char* str, int nFrom, int nTo);
+
+		/**
+		*  Converts utf8 string to utf16 string
+		*  @param utf8 The utf8 string to be converted
+		*  @return outUtf16 string
+		*/
+		static std::string UTF8ToUTF16(const std::string& utf8);
+
+		/**
+		*  Converts utf16 string to utf8 string
+		*  @param utf16 The utf16 string to be converted
+		*  @return The output utf8 string
+		*/
+		static std::string UTF16ToUTF8(const std::string& utf16);
 
 		/** encode a string using really simple algorithm. it just makes the source ineligible. It is still not immune to crackers.
 		* str = SimpleDecode(SimpleEncode(str)) 
 		* @return: it may return NULL if input invalid
 		*/
-		static const char* SimpleEncode(const char* source);
+		static std::string SimpleEncode(const std::string& source);
 
 		/** decode a string using really simple algorithm.  
 		* str = SimpleDecode(SimpleEncode(str)) 
 		* @return: it may return NULL if input invalid
 		*/
-		static const char* SimpleDecode(const char* source);
+		static std::string SimpleDecode(const std::string& source);
 
 		/** convert the md5 of the input source string. */
-		static string md5(const char* source);
-		static string md5_(const char* source, bool bBinary);
+		static string md5(const string& source);
+		static string md5_(const string& source, bool bBinary);
+
+		/** convert the sha1 of the input source string. */
+		static string sha1(const string& source);
+		static string sha1_(const string& source, bool bBinary);
+
+		/** convert the base64 of the input source string. */
+		static string base64(const string& source);
+		/** return the unbase64 of the input source string. */
+		static string unbase64(const string& source);
 
 		/** Generating [-MAX, MAX] long integer
 		* @param seedTable: nil or a table containing {_seed=integer} 
@@ -64,6 +87,7 @@ namespace ParaScripting
 		  | 950   |  big5   |
 		  | 936   |  gb2312 |
 		  | 65001 |  utf-8  |
+		  |       |  utf-16  |
 		  | 65005 |  utf-32  |
 		* There is one special code name called "HTML", which contains HTML special characters in ascii code page. This is usually true for most "iso8859-15" encoding in western worlds. 
 		* It just writes the unicode number\U+XXXX in ascii character "&#XXXX;" where & is optional. 
@@ -73,7 +97,7 @@ namespace ParaScripting
 		* local text = ParaMisc.EncodingConvert("HTML", "", "Chinese characters: &#24320;&#21457;")
 		* log(text);
 		*/
-		static const char* EncodingConvert(const object& srcEncoding, const object& dstEncoding, const object& bytes);
+		static const std::string& EncodingConvert(const std::string& srcEncoding, const std::string& dstEncoding, const std::string& bytes);
 
 		/** copy text to clipboard. Input is ANSI code page */
 		static bool CopyTextToClipboard(const char* text);

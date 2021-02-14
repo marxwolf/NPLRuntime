@@ -114,7 +114,7 @@ namespace ParaScripting
 			else if(sFilterFunc[0]>='0' && sFilterFunc[0]<='9')
 			{
 				// filter by type. 
-				DWORD filter = atoi(sFilterFunc);
+				DWORD filter = (DWORD)atoll(sFilterFunc);
 				// if(filter!=0)
 				{
 					SetPickingFilter(filter);
@@ -124,7 +124,7 @@ namespace ParaScripting
 			else if(sFilterFunc[0] == 'p' && sFilterFunc[1] == ':' && sFilterFunc[2]>='0' && sFilterFunc[2]<='9')
 			{
 				// filter by physics group.  e.g. "p:4294967295" matches all physics group
-				DWORD filter = atoi(sFilterFunc+2);
+				DWORD filter = (DWORD)atoll(sFilterFunc+2);
 				{
 					SetPickingPhysicsFilter(filter);
 					pFilterFunc = g_fncPickingByPhysicsGroup;
@@ -329,9 +329,10 @@ void ParaObject::CheckLoadPhysics()
 
 void ParaObject::LoadPhysics()
 {
-	if(IsValid() && (m_pObj->GetType()==CBaseObject::MeshPhysicsObject))
+	if(IsValid())
 	{
-		((CMeshPhysicsObject*)(m_pObj))->LoadPhysics();
+		m_pObj->SetAlwaysLoadPhysics(true);
+		m_pObj->LoadPhysics();
 	}
 }
 
@@ -620,16 +621,16 @@ void ParaObject::AddChild(const ParaObject obj){
 };
 void ParaObject::EnablePhysics(bool bEnable)
 {
-	if(IsValid() && m_pObj->GetType() == CBaseObject::MeshPhysicsObject)
+	if(IsValid())
 	{
-		((CMeshPhysicsObject*)m_pObj)->EnablePhysics(bEnable);
+		m_pObj->EnablePhysics(bEnable);
 	}
 }
 bool ParaObject::IsPhysicsEnabled()
 {
-	if(IsValid() && m_pObj->GetType() == CBaseObject::MeshPhysicsObject)
+	if(IsValid())
 	{
-		return ((CMeshPhysicsObject*)m_pObj)->IsPhysicsEnabled();
+		return m_pObj->IsPhysicsEnabled();
 	}
 	return false;
 }
@@ -1796,7 +1797,8 @@ void ParaScene::FireMissile2(ParaAssetObject& asset, float fSpeed, double fromX,
 
 ParaObject ParaScene::CreateManagedLoader(const char * sLoaderName)
 {
-	ParaObject obj((CBaseObject*)CGlobals::GetScene()->CreateManagedLoader(string(sLoaderName)));
+	string sTmp(sLoaderName);
+	ParaObject obj((CBaseObject*)CGlobals::GetScene()->CreateManagedLoader(sTmp));
 	return obj;
 }
 
@@ -2286,7 +2288,7 @@ ParaObject ParaScene::MousePick(float fMaxDistance, const char* sFilterFunc)
 	{
 		static CSphereObject obj;
 		Vector3 vIntersectPos(0,0,0);
-		float fDist = CGlobals::GetScene()->PickClosest(ptCursor.x, ptCursor.y, NULL, &vIntersectPos, NULL, false, fMaxDistance, GetPhysicsGroupMaskByName(sFilterFunc));
+		float fDist = CGlobals::GetScene()->PickClosest(ptCursor.x, ptCursor.y, &pObj, &vIntersectPos, NULL, false, fMaxDistance, GetPhysicsGroupMaskByName(sFilterFunc));
 		if(fDist<0)
 		{
 			return ParaObject(NULL);
@@ -2296,6 +2298,7 @@ ParaObject ParaScene::MousePick(float fMaxDistance, const char* sFilterFunc)
 			// one can retrieve the intersection point and distance by position and scaling. 
 			obj.SetPosition(DVector3(vIntersectPos));
 			obj.SetScaling(fDist);
+			obj.SetIdentifier(pObj ? pObj->GetIdentifier() : "");
 			return ParaObject(&obj);
 		}
 	}
@@ -2484,8 +2487,7 @@ int ParaScene::GetActionMeshesBySphere(const object& inout, float x, float y, fl
 int ParaScene::GetObjectsByScreenRect( const object& inout, int left, int top, int right, int bottom, const char* sFilterFunc, float fMaxDistance )
 {
 	OBJECT_FILTER_CALLBACK pFilterFunc = GetFilterFuncByName(sFilterFunc);
-	g_fncPickingActionMesh;
-
+	
 	list<CBaseObject*> output;
 	RECT rect = {left, top, right, bottom};
 	
@@ -2506,8 +2508,7 @@ int ParaScene::GetObjectsByScreenRect( const object& inout, int left, int top, i
 int ParaScene::GetObjectsBySphere( const object& inout, float x, float y, float z, float radius, const char* sFilterFunc )
 {
 	OBJECT_FILTER_CALLBACK pFilterFunc = GetFilterFuncByName(sFilterFunc);
-	g_fncPickingActionMesh;
-
+	
 	list<CBaseObject*> output;
 	CShapeSphere sphere(Vector3(x,y,z), radius);
 	int nCount = CGlobals::GetScene()->GetObjectsBySphere(output, sphere, pFilterFunc);
@@ -2968,7 +2969,7 @@ void ParaMiniSceneGraph::Draw( float fDeltaTime )
 {
 	if(IsValid())
 	{
-		if( SUCCEEDED( CGlobals::GetRenderDevice()->BeginScene() ) )
+		if(CGlobals::GetRenderDevice() && SUCCEEDED( CGlobals::GetRenderDevice()->BeginScene() ) )
 		{
 			m_pSceneGraph->Draw(fDeltaTime);
 

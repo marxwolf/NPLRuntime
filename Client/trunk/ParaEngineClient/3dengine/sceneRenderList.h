@@ -1,5 +1,5 @@
 #pragma once
-
+#include "SceneObject.h"
 /** @def if there are over this number of mesh objects in a single frame, we will use instancing to draw them in a single draw call. */
 #define AUTO_INSTANCING_THRESHOLD_NUM	10
 
@@ -163,7 +163,7 @@ namespace ParaEngine
 								for(int i=0;i<nInstanceCount;i++)
 								{	
 									Matrix4 matrix;
-									(*itCurCP).m_pRenderObject->GetRenderWorldMatrix(&matrix);
+									(*itCurCP).m_pRenderObject->GetRenderMatrix(matrix);
 									// since no projection, encode the 4x3 part in a 3x4(shader will decode)
 									pVertices[i].r1 = Vector4(matrix._11,matrix._21,matrix._31,matrix._41);
 									pVertices[i].r2 = Vector4(matrix._12,matrix._22,matrix._32,matrix._42);
@@ -218,10 +218,13 @@ namespace ParaEngine
 		int nObjCount = 0;
 		if(renderlist.empty())
 			return nObjCount;
-#ifdef USE_DIRECTX_RENDERER
+//#ifdef USE_DIRECTX_RENDERER
 		sceneState.m_nCurRenderGroup = RENDER_SHADOWMAP;
-
+#ifdef USE_DIRECTX_RENDERER
 		LPDIRECT3DDEVICE9 pd3dDevice = CGlobals::GetRenderDevice();
+#else
+		auto pd3dDevice = CGlobals::GetRenderDevice();
+#endif
 		// check whether use instancing
 		CEffectFile* pEntity = CGlobals::GetEffectManager()->GetEffectByHandle(TECH_SIMPLE_MESH_NORMAL_INSTANCED); 
 		bool bUseInstancing = CGlobals::GetScene()->IsInstancingEnabled() && g_bShaderVersion3 && (pEntity!=0) && pEntity->IsValid();
@@ -242,7 +245,8 @@ namespace ParaEngine
 			int nCurTechHandle = (*itCurCP).m_pRenderObject->GetPrimaryTechniqueHandle();
 			AssetEntity * pEntity = (*itCurCP).m_pRenderObject->GetPrimaryAsset();
 
-			if(bUseInstancing && (nNum==0 || nCurTechHandle!=nLastHandle || pLastEntity!=pEntity))
+#ifdef USE_DIRECTX_RENDERER
+			if (bUseInstancing && (nNum == 0 || nCurTechHandle != nLastHandle || pLastEntity != pEntity))
 			{
 				// check to see if we can use instancing to draw the mesh in one draw call. 
 				// currently, instancing only works with static mesh with normals. 
@@ -272,7 +276,7 @@ namespace ParaEngine
 								for(int i=0;i<nInstanceCount;i++)
 								{	
 									Matrix4 matrix;
-									(*itCurCP).m_pRenderObject->GetRenderWorldMatrix(&matrix);
+									(*itCurCP).m_pRenderObject->GetRenderMatrix(matrix);
 									// since no projection, encode the 4x3 part in a 3x4(shader will decode)
 									pVertices[i].r1 = Vector4(matrix._11,matrix._21,matrix._31,matrix._41);
 									pVertices[i].r2 = Vector4(matrix._12,matrix._22,matrix._32,matrix._42);
@@ -302,6 +306,7 @@ namespace ParaEngine
 					}
 				}
 			}
+#endif
 			pLastEntity = pEntity;
 
 			CEffectFile* pEffect = CGlobals::GetEffectManager()->GetEffectByHandle(nCurTechHandle);
@@ -323,7 +328,7 @@ namespace ParaEngine
 				++nObjCount;
 			}
 		}
-#endif
+//#endif
 		return nObjCount;
 	}
 }

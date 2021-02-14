@@ -45,6 +45,10 @@ void CBootStrapper::SetMainLoopFile( const string& sMainFile )
 	m_sMainLoopFile = sMainFile;
 }
 
+bool ParaEngine::CBootStrapper::IsEmpty()
+{
+	return m_sMainLoopFile == DEFAULT_GAME_LOOP_FILE;
+}
 
 const string& CBootStrapper::GetConfigFile()
 {
@@ -59,7 +63,7 @@ void CBootStrapper::SetConfigFile(const string& sConfigFile)
 
 #ifdef PARAENGINE_MOBILE
 #include <tinyxml2.h>
-using namespace tinyxml2;
+namespace TXML = tinyxml2;
 bool CBootStrapper::LoadFromFile(const string& sXMLfile)
 {
 	string sFileName = sXMLfile;
@@ -67,7 +71,8 @@ bool CBootStrapper::LoadFromFile(const string& sXMLfile)
 		sFileName = DEFAULT_XML_PATH;
 
 	int nSize = (int)(sXMLfile.size());
-	if (nSize > 4 && (sXMLfile[nSize - 4] == '.') && (sXMLfile[nSize - 3] == 'l') && (sXMLfile[nSize - 2] == 'u') && (sXMLfile[nSize - 1] == 'a'))
+	if (nSize > 4 && (sXMLfile[nSize - 4] == '.') && (((sXMLfile[nSize - 3] == 'l') && (sXMLfile[nSize - 2] == 'u') && (sXMLfile[nSize - 1] == 'a'))
+		|| ((sXMLfile[nSize - 3] == 'n') && (sXMLfile[nSize - 2] == 'p') && (sXMLfile[nSize - 1] == 'l'))))
 	{
 		// if the file extension is "lua", we will use it directly. 
 		SetMainLoopFile(sXMLfile);
@@ -82,7 +87,7 @@ bool CBootStrapper::LoadFromFile(const string& sXMLfile)
 	{
 		try
 		{
-			XMLDocument doc(true, COLLAPSE_WHITESPACE);
+			TXML::XMLDocument doc(true, TXML::COLLAPSE_WHITESPACE);
 
 			string sCode;
 			if ((int)file.getSize() > 0)
@@ -94,9 +99,9 @@ bool CBootStrapper::LoadFromFile(const string& sXMLfile)
 			// XML_ENCODING_UTF8?
 			doc.Parse(sCode.c_str(), (int)sCode.size());
 
-			XMLHandle hDoc(&doc);
-			XMLElement* pElem;
-			XMLHandle hRoot(0);
+			TXML::XMLHandle hDoc(&doc);
+			TXML::XMLElement* pElem;
+			TXML::XMLHandle hRoot(0);
 			// block: <MainGameLoop>script/gameinterface.lua</MainGameLoop>
 			{
 				pElem = hDoc.FirstChildElement("MainGameLoop").ToElement();
@@ -112,7 +117,7 @@ bool CBootStrapper::LoadFromFile(const string& sXMLfile)
 					SetConfigFile(pElem->GetText());
 				}
 				// save this for later
-				hRoot = XMLHandle(pElem);
+				hRoot = TXML::XMLHandle(pElem);
 			}
 			return true;
 		}
@@ -131,12 +136,12 @@ bool CBootStrapper::SaveToFile(const string& sXMLfile)
 		sFileName = DEFAULT_XML_PATH;
 
 	/// Make xml: <?xml ..>
-	XMLDocument doc(true, COLLAPSE_WHITESPACE);
-	XMLDeclaration * decl = doc.NewDeclaration(nullptr);
+	TXML::XMLDocument doc(true, TXML::COLLAPSE_WHITESPACE);
+	TXML::XMLDeclaration * decl = doc.NewDeclaration(nullptr);
 	doc.LinkEndChild(decl);
 	/// <MainGameLoop>script/gameinterface.lua</MainGameLoop>
-	XMLElement * element = doc.NewElement("MainGameLoop");
-	XMLText * text = doc.NewText(GetMainLoopFile().c_str());
+	TXML::XMLElement * element = doc.NewElement("MainGameLoop");
+	TXML::XMLText * text = doc.NewText(GetMainLoopFile().c_str());
 	element->LinkEndChild(text);
 	doc.LinkEndChild(element);
 
@@ -152,10 +157,16 @@ bool CBootStrapper::LoadFromFile( const string& sXMLfile )
 		sFileName = DEFAULT_XML_PATH;
 
 	int nSize = (int)(sXMLfile.size());
-	if(nSize>4 && (sXMLfile[nSize-4] == '.') && (sXMLfile[nSize-3] == 'l') && (sXMLfile[nSize-2] == 'u') && (sXMLfile[nSize-1] == 'a'))
+	if(nSize>4 && (sXMLfile[nSize-4] == '.') && (((sXMLfile[nSize-3] == 'l') && (sXMLfile[nSize-2] == 'u') && (sXMLfile[nSize-1] == 'a')) 
+		|| ((sXMLfile[nSize - 3] == 'n') && (sXMLfile[nSize - 2] == 'p') && (sXMLfile[nSize - 1] == 'l'))))
 	{
-		// if the file extension is "lua", we will use it directly. 
-		SetMainLoopFile(sXMLfile);
+		// if the file extension is "lua" or "npl", we will use it directly. 
+		if (sXMLfile[0] == '.' && sXMLfile[1] == '/') {
+			string filename = sXMLfile.substr(2);
+			SetMainLoopFile(filename);
+		}
+		else
+			SetMainLoopFile(sXMLfile);
 		return true;
 	}
 
@@ -227,4 +238,6 @@ bool CBootStrapper::SaveToFile( const string& sXMLfile )
 
 	return doc.SaveFile( sFileName );
 }
+
+
 #endif

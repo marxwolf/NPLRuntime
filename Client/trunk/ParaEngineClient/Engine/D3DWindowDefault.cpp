@@ -106,7 +106,7 @@ void CD3DWindowDefault::DefaultWinThreadProc(HINSTANCE hInstance)
 		if( GetMessageW( &msg, NULL, 0U, 0U ) != 0 )
 		{
 			// Translate and dispatch the message
-			if( (hAccel == NULL) || (m_hWnd == NULL) ||
+			if( (m_hWnd == NULL) ||
 				// process custom messages. standalone app must always call it in order for the game engine to act properly
 				((m_pApp->MsgProcWinThreadCustom(msg.message, msg.wParam, msg.lParam)==0) &&
 				(TranslateAcceleratorW( m_hWnd, hAccel, &msg ) == 0)))
@@ -339,7 +339,7 @@ int CD3DWindowDefault::Run(HINSTANCE hInstance)
 	StartWindowThread(hInstance);
 	
 	// start the main loop timer. 
-	m_main_timer.expires_from_now(std::chrono::seconds(0));
+	m_main_timer.expires_from_now(std::chrono::milliseconds(50));
 	m_main_timer.async_wait(boost::bind(&CD3DWindowDefault::handle_mainloop_timer, this, boost::asio::placeholders::error));
 	
 	// start the main loop now

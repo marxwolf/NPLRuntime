@@ -2,7 +2,7 @@
 #include <vector>
 #include "IAttributeFields.h"
 #include "IMovieCodec.h"
-
+#include <mutex>
 namespace ParaEngine
 {
 	using namespace std;
@@ -88,6 +88,8 @@ namespace ParaEngine
 
 		/** get preferred codec */
 		virtual int GetCodec();
+	public:
+		typedef std::function<void(bool, std::vector<BYTE>& base64)>			screenshot_callback;
 
 	public:
 		/** clear all clips*/
@@ -164,13 +166,44 @@ namespace ParaEngine
 		@param filename: this is the file name without extension. It can be "".*/
 		bool TakeScreenShot(const string& filename);
 
+		/** Use a new thread to take a screenshot.
+		* @param filename; Its included file path and file name.
+		* @param bEncode;If true Enable Base64Encode.
+		* @param width; The out value of Image's width, if width = -1 or height = -1, the out value same as the width of Windows.
+		* @param height; The out value of Image's height, if width = -1 or height = -1, the out value same as the height of Windows.
+		* @param screenshot_callback; It will be actived after take a screenshot.
+		*/
+		void TakeScreenShot_Async(const string& filename, bool bEncode = false, int width = -1, int height = -1, screenshot_callback callback = nullptr);
+		/** Captures a bitmap buffer and uses FreeImage library to change it into a Image.
+		*   the format of Image defined by the extension of filename.
+		*   default format is PNG,also supported DDS JPG BMP TGA.
+		* @param filename; Its included file path and file name.
+		* @param outBase64Buffers; The result of Base64Encode.
+		* @param bEncode; If true Enable Base64Encode.
+		* @param width; The out value of Image's width, if width = -1 or height = -1, the out value same as the width of Windows.
+		* @param height; The out value of Image's height, if width = -1 or height = -1, the out value same as the height of Windows.
+		*/
+		bool TakeScreenShot_FromGDI(const string& filename, std::vector<BYTE>& outBase64Buffers, bool bEncode = false, int width = -1, int height = -1);
+		/** Captures a bitmap buffer through Windows GDI.
+		* @param nHwnd; A windows handle.
+		* @param outFileHeaderSize; Out the size of BITMAPFILEHEADER.
+		* @param outInfoHeaderSize; Out the size of BITMAPINFOHEADER
+		* @param outBuffers; Out the completely buffer of a Bitmap includes BITMAPFILEHEADER and BITMAPINFOHEADER.
+		* @param bCaptureMouse;True capture the mouse,False otherwise.
+		* @param nLeft; The margin left of screen start to be captured.
+		* @param nTop; The margin top of screen start to be captured.
+		* @param width; The width of screen to be captured.
+		* @param height; The height of screen to be captured.
+		*/
+		int CaptureBitmapBuffer(HWND nHwnd, int& outFileHeaderSize, int& outInfoHeaderSize, std::vector<BYTE>& outBuffers, bool bCaptureMouse = false, int nLeft = 0, int nTop = 0, int width = 0, int height = 0);
+
 		/** by default it save the screen shot as JPG file in the ./screenshot directory. 
 		* @param filename: this is the file name without extension. It can be "".
 		* @param width; in pixel, if 0 it will be the screen size
 		* @param height; in pixel, if 0 it will be the screen size
 		*/
 		bool TakeScreenShot(const string& filename, int width, int height);
-
+		
 		/**
 		* resize the given image
 		* @param width; in pixel
@@ -260,6 +293,9 @@ namespace ParaEngine
 		string m_beginningStr;
 		string m_endingStr;
 		float m_fLastRefreshInterval;
+
+		std::vector<std::function<void()>> m_functionsToPerform;
+		std::mutex m_performMutex;
 		
 #ifdef USE_DIRECTX_RENDERER
 		LPDIRECT3DTEXTURE9 m_pCaptureTexture;

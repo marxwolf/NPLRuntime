@@ -8,6 +8,7 @@
 #include "ParaEngine.h"
 #include "ParaEngineSettings.h"
 #include "util/os_calls.h"
+#include "util/StringHelper.h"
 #include "ObjectAutoReleasePool.h"
 #include "2dengine/GUIRoot.h"
 #include "2dengine/GUIDirectInput.h"
@@ -24,14 +25,26 @@
 #include "RenderTarget.h"
 #include "WeatherEffect.h"
 #include "OverlayObject.h"
+#include "LightObject.h"
 #include "NPLRuntime.h"
 #include "EventsCenter.h"
+#include "BootStrapper.h"
+#include "NPL/NPLHelper.h"
 #include "AISimulator.h"
+#include "AsyncLoader.h"
+#include "FileManager.h"
+#include "Archive.h"
 #include "ParaEngineAppBase.h"
+#include "NPLPackageConfig.h"
+#include "IO/ResourceEmbedded.h"
+#include "GeosetObject.h"
 
 using namespace ParaEngine;
 
 CParaEngineApp* CParaEngineAppBase::g_pCurrentApp = NULL;
+
+/** default bootstrapper file */
+#define NPL_CODE_WIKI_BOOTFILE "script/apps/WebServer/WebServer.lua"
 
 // temp TEST code here
 void ParaEngine::CParaEngineAppBase::DoTestCode()
@@ -53,13 +66,42 @@ ParaEngine::CParaEngineAppBase::CParaEngineAppBase(const char* sCmd)
 ParaEngine::CParaEngineAppBase::~CParaEngineAppBase()
 {
 	DestroySingletons();
-	g_pCurrentApp = NULL;
+	SetCurrentInstance(NULL);
+}
+
+void ParaEngine::CParaEngineAppBase::DeleteInterface()
+{
+	delete this;
+}
+
+BaseInterface* ParaEngine::CParaEngineAppBase::AcquireInterface()
+{
+	addref();
+	return(BaseInterface*)this;
+}
+
+void ParaEngine::CParaEngineAppBase::ReleaseInterface()
+{
+	if (delref()){
+		DeleteInterface();
+	}
 }
 
 CParaEngineApp* ParaEngine::CParaEngineAppBase::GetInstance()
 {
 	return g_pCurrentApp;
 }
+
+CParaEngineAppBase::LifetimeType ParaEngine::CParaEngineAppBase::LifetimeControl()
+{
+	return wantsRelease;
+}
+
+void CParaEngineAppBase::SetCurrentInstance(CParaEngineApp* pInstance)
+{
+	g_pCurrentApp = pInstance;
+}
+
 
 void ParaEngine::CParaEngineAppBase::DestroySingletons()
 {
@@ -72,11 +114,25 @@ void ParaEngine::CParaEngineAppBase::OnFrameEnded()
 	CObjectAutoReleasePool::GetInstance()->clear();
 }
 
-void ParaEngine::CParaEngineAppBase::InitCommon()
+bool ParaEngine::CParaEngineAppBase::InitCommandLineParams()
 {
-	g_pCurrentApp = (CParaEngineApp*) this;
+	const char* sWritablePath = GetAppCommandLineByParam("writablepath", NULL);
+	if (sWritablePath && sWritablePath[0] != 0) {
+		CParaFile::SetWritablePath(sWritablePath);
+	}
 
-	srand((unsigned long)time(NULL));
+	const char* nAssetLogLevel = GetAppCommandLineByParam("assetlog_level", NULL);
+	if (nAssetLogLevel && nAssetLogLevel[0] != 0) 
+	{
+		int nLevel = 0;
+		if (strcmp(nAssetLogLevel, "all") == 0)
+			nLevel = ParaEngine::CAsyncLoader::Log_All;
+		else if (strcmp(nAssetLogLevel, "remote") == 0)
+			nLevel = ParaEngine::CAsyncLoader::Log_Remote;
+		else if (strcmp(nAssetLogLevel, "error") == 0)
+			nLevel = ParaEngine::CAsyncLoader::Log_Error;
+		ParaEngine::CAsyncLoader::GetSingleton().SetLogLevel(0);
+	}
 
 	const char* sLogFile = GetAppCommandLineByParam("logfile", NULL);
 	if (sLogFile && sLogFile[0] != 0){
@@ -84,9 +140,40 @@ void ParaEngine::CParaEngineAppBase::InitCommon()
 	}
 
 	const char* sServerMode = GetAppCommandLineByParam("servermode", NULL);
-	Enable3DRendering( !(sServerMode && strcmp(sServerMode, "true") == 0) );
-	
-	CParaFile::SetDevDirectory(GetAppCommandLineByParam("dev", ""));
+	const char* sInteractiveMode = GetAppCommandLineByParam("i", NULL);
+	bool bIsServerMode = (sServerMode && strcmp(sServerMode, "true") == 0);
+	bool bIsInterpreterMode = (sInteractiveMode && strcmp(sInteractiveMode, "true") == 0);
+	Enable3DRendering(!bIsServerMode && !bIsInterpreterMode);
+
+	const char* sDevFolder = GetAppCommandLineByParam("dev", NULL);
+	if (sDevFolder)
+	{
+		if (sDevFolder[0] == '\0' || (sDevFolder[1] == '\0' && (sDevFolder[0] == '/' || sDevFolder[0] == '.')))
+		{
+			sDevFolder = CParaFile::GetCurDirectory(0).c_str();
+		}
+		CParaFile::SetDevDirectory(sDevFolder);
+	}
+	return true;
+}
+
+bool ParaEngine::CParaEngineAppBase::ForceRender()
+{
+	return false;
+}
+
+const char * ParaEngine::CParaEngineAppBase::GetModuleDir() 
+{ 
+	return m_sModuleDir.c_str(); 
+}
+
+void ParaEngine::CParaEngineAppBase::InitCommon()
+{
+	CStaticInitRes::StaticInit();
+
+	SetCurrentInstance((CParaEngineApp*)this);
+
+	srand((unsigned long)time(NULL));
 
 	FindParaEngineDirectory();
 	RegisterObjectClasses();
@@ -117,7 +204,8 @@ void ParaEngine::CParaEngineAppBase::RegisterObjectClasses()
 	pAttManager->RegisterObjectFactory("BMaxObject", new CDefaultObjectFactory<BMaxObject>());
 	pAttManager->RegisterObjectFactory("CSkyMesh", new CDefaultObjectFactory<CSkyMesh>());
 	pAttManager->RegisterObjectFactory("COverlayObject", new CDefaultObjectFactory<COverlayObject>());
-
+	pAttManager->RegisterObjectFactory("CLightObject", new CDefaultObjectFactory<CLightObject>());
+	pAttManager->RegisterObjectFactory("CGeosetObject",new CDefaultObjectFactory<CGeosetObject>());
 	// TODO add more here: 
 }
 
@@ -163,15 +251,29 @@ DWORD ParaEngine::CParaEngineAppBase::GetCoreUsage()
 
 void ParaEngine::CParaEngineAppBase::SystemMessageBox(const std::string& msg)
 {
-#ifdef WIN32
 	OUTPUT_LOG("System Message: %s \n", msg.c_str());
-	::MessageBox(CGlobals::GetAppHWND(), msg.c_str(), "System Message", MB_OK);
+#ifdef WIN32
+	//::MessageBox(CGlobals::GetAppHWND(), msg.c_str(), "System Message", MB_OK);
 #endif
 }
 
 void ParaEngine::CParaEngineAppBase::SetAppCommandLine(const char* pCommandLine)
 {
 	CCommandLineParams::SetAppCommandLine(pCommandLine);
+	InitCommandLineParams();
+
+	static bool bFirstCall = true;
+	if (bFirstCall)
+	{
+		bFirstCall = false;
+		OUTPUT_LOG1("NPL Runtime started\n");
+		OUTPUT_LOG("NPL bin dir: %s\n", m_sModuleDir.c_str());
+		if (m_sPackagesDir.empty()) {
+			OUTPUT_LOG("no packages at: %s\n", m_sPackagesDir.c_str());
+		}
+		OUTPUT_LOG("WorkingDir: %s\n", m_sInitialWorkingDir.c_str());
+		OUTPUT_LOG("WritablePath: %s\n", CParaFile::GetWritablePath().c_str());
+	}
 }
 
 const char* ParaEngine::CParaEngineAppBase::GetAppCommandLine()
@@ -239,29 +341,36 @@ void ParaEngine::CParaEngineAppBase::VerifyCommandLine(const char* sCommandLine,
 		strCmd = sCommandLine;
 	if (strCmd.find("bootstrapper") == string::npos)
 	{
-		// if no bootstrapper is specified, try to find the config.txt in current directory. 
-		CParaFile configFile;
-		if (configFile.OpenFile("config.txt"))
+		auto nPos = string::npos;
+		if ( (((nPos=strCmd.rfind(".npl")) != string::npos) || ((nPos = strCmd.rfind(".lua")) != string::npos)) )
 		{
-			std::string sCmdLine;
-			configFile.GetNextAttribute("cmdline", sCmdLine);
-			configFile.close();
-			if (sCmdLine.find("bootstrapper") != string::npos)
+			// just in case, user has specified XXX.lua instead of bootstrapper=XXX.lua || .npl in the command line. 
+			// following format are valid for specifying bootstrapper file. 
+			// - [parameters] bootstrapper.lua
+			// - bootstrapper.lua [parameters]
+			auto nFilenameFromPos = strCmd.rfind(" ", nPos);
+			if (nFilenameFromPos != string::npos)
 			{
-				strCmd = strCmd + " " + sCmdLine;
+				strCmd = strCmd.substr(0, nFilenameFromPos + 1) + std::string("bootstrapper=") +
+					strCmd.substr(nFilenameFromPos + 1, nPos - nFilenameFromPos + 3) + strCmd.substr(nPos + 4);
+			}
+			else
+			{
+				strCmd = std::string("bootstrapper=") + strCmd.substr(0, nPos + 4) + strCmd.substr(nPos + 4);
 			}
 		}
 		else
 		{
-			// just in case, user has specified XXX.lua instead of bootstrapper=XXX.lua in the command line. 
-			auto nPos = strCmd.find(".lua");
-			if (nPos != string::npos)
+			// if no bootstrapper is specified, try to find the config.txt in current directory. 
+			CParaFile configFile;
+			if (configFile.OpenFile("config.txt"))
 			{
-				auto nFilenameFromPos = strCmd.rfind(" ", nPos);
-				if (nPos != string::npos)
+				std::string sCmdLine;
+				configFile.GetNextAttribute("cmdline", sCmdLine);
+				configFile.close();
+				if (sCmdLine.find("bootstrapper") != string::npos)
 				{
-					strCmd = strCmd.substr(0, nFilenameFromPos + 1) + std::string("bootstrapper=") +
-						strCmd.substr(nFilenameFromPos + 1, nPos - nFilenameFromPos + 3) + strCmd.substr(nPos + 4);
+					strCmd = strCmd + " " + sCmdLine;
 				}
 			}
 		}
@@ -278,55 +387,151 @@ void ParaEngine::CParaEngineAppBase::SetHasClosingRequest(bool val)
 	m_hasClosingRequest = val;
 }
 
-bool ParaEngine::CParaEngineAppBase::LoadNPLPackage(const char* sFilePath_)
+
+bool ParaEngine::CParaEngineAppBase::LoadNPLPackage(const char* sFilePath_, std::string * pOutMainFile)
 {
 	std::string sFilePath = sFilePath_;
 	std::string sPKGDir;
+	bool bHasOutputMainFile = false;
+	CNPLPackageConfig config;
 	if (sFilePath[sFilePath.size() - 1] == '/')
 	{
 		std::string sDirName = sFilePath.substr(0, sFilePath.size() - 1);
 		
 		if (!CParaFile::GetDevDirectory().empty())
 		{
-			std::string sFullDir;
-			sFullDir = CParaFile::GetDevDirectory() + sDirName;
+			std::string sFullDir = CParaFile::GetAbsolutePath(sDirName, CParaFile::GetDevDirectory());
 			if (CParaFile::DoesFileExist2(sFullDir.c_str(), FILE_ON_DISK))
 			{
 				sPKGDir = sFullDir;
 			}
 		}
-		std::string sFullDir;
+		
 		if (!sPKGDir.empty())
 		{
 			// found packages under dev folder
 		}
-		else if (CParaFile::DoesFileExist2(sDirName.c_str(), FILE_ON_DISK, &sFullDir))
+		else 
 		{
-			sPKGDir = sFullDir;
-		}
-		else
-		{
-			if (!m_sModuleDir.empty())
+			std::string sFullDir;
+
+			if ( CParaFile::IsAbsolutePath(sDirName) && CParaFile::DoesFileExist2(sDirName.c_str(), FILE_ON_DISK, &sFullDir))
 			{
-				std::string workingDir = m_sModuleDir;
-				// search for all parent directory for at most 5 levels
-				for (int i = 0; i < 5 && !workingDir.empty(); ++i)
+				sPKGDir = sFullDir;
+			}
+			else
+			{
+				sFullDir = CParaFile::GetAbsolutePath(sDirName, CParaFile::GetCurDirectory(0));
+				if (CParaFile::DoesFileExist2(sFullDir.c_str(), FILE_ON_DISK))
 				{
-					std::string sFullDir = workingDir + sDirName;
-					if (CParaFile::DoesFileExist(sFullDir.c_str(), false))
+					sPKGDir = sFullDir;
+				}
+
+				if (sPKGDir.empty() && !m_sModuleDir.empty())
+				{
+					std::string workingDir = m_sModuleDir;
+					// search for all parent directory for at most 5 levels
+					for (int i = 0; i < 5 && !workingDir.empty(); ++i)
 					{
-						sPKGDir = sFullDir;
-						break;
-					}
-					else
-					{
-						workingDir = CParaFile::GetParentDirectoryFromPath(workingDir, 1);
+						std::string sFullDir = CParaFile::GetAbsolutePath(sDirName, workingDir);
+						if (CParaFile::DoesFileExist2(sFullDir.c_str(), FILE_ON_DISK))
+						{
+							sPKGDir = sFullDir;
+							break;
+						}
+						else
+						{
+							workingDir = CParaFile::GetParentDirectoryFromPath(workingDir, 1);
+						}
 					}
 				}
 			}
 		}
+		if (sPKGDir.empty())
+		{
+			// if package folder is not found, we will search for zip and pkg file with the same name as the folder name.
+			std::string pkgFile = sDirName + ".zip";
+			CArchive* pArchive = CFileManager::GetInstance()->GetArchive(pkgFile);
+			if (pArchive == 0)
+			{
+				if (CFileManager::GetInstance()->OpenArchive(pkgFile, false))
+				{
+					pArchive = CFileManager::GetInstance()->GetArchive(pkgFile);
+				}
+			}
+			if (pArchive!=0)
+			{
+				// locate "package.npl" in root folder of zip file
+				CParaFile file;
+				if (file.OpenFile(pArchive, "package.npl"))
+				{
+					config.open(file.getBuffer(), file.getSize());
+				}
+				else
+				{
+					static CSearchResult result;
+					result.InitSearch(sDirName + "/", 0, 1, 0);
+					pArchive->FindFiles(result, "", "*/package.npl", 0);
+					if (result.GetNumOfResult() > 0)
+					{
+						// "*/package" just in case we zipped data in a subfolder.
+						CParaFile file;
+						if (file.OpenFile(pArchive, result.GetItem(0).c_str()))
+						{
+							std::string sBaseDir = result.GetItem(0).substr(0, result.GetItem(0).size() - 12);
+							pArchive->SetBaseDirectory(sBaseDir.c_str());
+							config.open(file.getBuffer(), file.getSize());
+						}
+					}
+				}
+			}
+			if (config.IsOpened())
+			{
+				sPKGDir = pkgFile;
+
+				if (!config.IsSearchPath())
+				{
+					pArchive->SetRootDirectory(sFilePath);
+					config.SetMainFile(CParaFile::GetAbsolutePath(config.GetMainFile(), sFilePath));
+				}
+				if (pOutMainFile)
+					*pOutMainFile = config.GetMainFile();
+			}
+		}
 	}
-	return !sPKGDir.empty() && CFileManager::GetInstance()->AddSearchPath(sPKGDir.c_str());
+	if (!sPKGDir.empty())
+	{
+		if (!config.IsOpened())
+		{
+			// disk file based package
+			std::string packageFile = sPKGDir + "/package.npl";
+			CParaFile file;
+			if (file.OpenFile(packageFile.c_str(), true, 0, false, FILE_ON_DISK))
+			{
+				config.open(file.getBuffer(), file.getSize());
+				// output main file
+				if (!config.IsSearchPath())
+				{
+					if (sFilePath.size() > 3 && sFilePath[0] == '.' && ((sFilePath[1] == '.' && sFilePath[2] == '/') || (sFilePath[1] == '/')))
+					{
+						// use absolute path if folder begins with ../ or ./
+						config.SetMainFile(CParaFile::GetAbsolutePath(config.GetMainFile(), sPKGDir));
+					}
+					else
+					{
+						// relative to root path
+						config.SetMainFile(CParaFile::GetAbsolutePath(config.GetMainFile(), sFilePath));
+					}
+				}
+			}
+			if (pOutMainFile)
+				*pOutMainFile = config.GetMainFile();
+			if (config.IsSearchPath())
+				return CFileManager::GetInstance()->AddSearchPath(sPKGDir.c_str());
+		}
+		return true;
+	}
+	return false;
 }
 
 void CParaEngineAppBase::AutoSetLocale()
@@ -422,7 +627,6 @@ void ParaEngine::CParaEngineAppBase::LoadPackagesInFolder(const std::string& sPk
 			}
 			// always load by relative path first, and then by absolute path. 
 			// For example, when there is a package in current working directory, it will be used instead the one in packages/ folder.
-			OUTPUT_LOG("loading package: %s\n", filename.c_str());
 			if (!CFileManager::GetInstance()->OpenArchive(filename))
 			{
 				if (!CFileManager::GetInstance()->OpenArchive(sPkgFolder + filename))
@@ -434,12 +638,65 @@ void ParaEngine::CParaEngineAppBase::LoadPackagesInFolder(const std::string& sPk
 	}
 }
 
+bool ParaEngine::CParaEngineAppBase::FindBootStrapper()
+{
+	const char* pBootFileName = GetAppCommandLineByParam("bootstrapper", "");
+	if (pBootFileName[0] == '\0' && ! CBootStrapper::GetSingleton()->IsEmpty())
+	{
+		// may be the `loadpackage` params have set the bootstrapper if not explicitly specified by the application. 
+		pBootFileName = CBootStrapper::GetSingleton()->GetMainLoopFile().c_str();
+		OUTPUT_LOG("try bootstrapper in loadpackage command: %s\n", pBootFileName);
+	}
+
+	bool bHasBootstrapper = CBootStrapper::GetSingleton()->LoadFromFile(pBootFileName);
+	if (!bHasBootstrapper)
+	{
+		if (pBootFileName && pBootFileName[0] != '\0'){
+			OUTPUT_LOG("error: can not find bootstrapper file at %s\n", pBootFileName);
+		}
+		pBootFileName = NPL_CODE_WIKI_BOOTFILE;
+		bHasBootstrapper = CBootStrapper::GetSingleton()->LoadFromFile(pBootFileName);
+		OUTPUT_LOG("We are using default bootstrapper at %s\n", pBootFileName);
+		if (!bHasBootstrapper)
+		{
+			OUTPUT_LOG("However, we can not locate that file either. Have you installed npl_package/main? \n\n\nPlease install it at https://github.com/NPLPackages/main\n\n\n");
+		}
+	}
+	// OUTPUT_LOG("cmd line: %s \n", GetAppCommandLine());
+	OUTPUT_LOG("main loop: %s \n", CBootStrapper::GetSingleton()->GetMainLoopFile().c_str());
+	return true;
+}
+
 void CParaEngineAppBase::LoadPackages()
 {
 	std::string sRootDir = CParaFile::GetCurDirectory(0);
 	OUTPUT_LOG("ParaEngine Root Dir is %s\n", sRootDir.c_str());
-	// load main package folder if exist
-	LoadNPLPackage("npl_packages/main/");
+	// always load main package folder if exist
+	std::string sOutputFile;
+	if (LoadNPLPackage("npl_packages/main/", &sOutputFile))
+	{
+		if (!sOutputFile.empty()) {
+			CGlobals::GetNPLRuntime()->GetMainRuntimeState()->Loadfile_async(sOutputFile.c_str());
+		}
+	}
+	
+	// load packages via command line
+	const char* sPackages = GetAppCommandLineByParam("loadpackage", NULL);
+	if (sPackages)
+	{
+		std::vector<std::string> listPackages;
+		StringHelper::split(sPackages, ",;", listPackages);
+		for (const std::string& package : listPackages)
+		{
+			std::string sOutputFile;
+			if (LoadNPLPackage(package.c_str(), &sOutputFile))
+			{
+				if (!sOutputFile.empty()) {
+					CGlobals::GetNPLRuntime()->GetMainRuntimeState()->Loadfile_async(sOutputFile.c_str());
+				}
+			}
+		}
+	}
 
 	LoadPackagesInFolder(sRootDir);
 	if (m_sPackagesDir.empty())
@@ -456,14 +713,12 @@ bool CParaEngineAppBase::FindParaEngineDirectory(const char* sHint)
 	if (!sModuleDir.empty())
 	{
 		m_sModuleDir = CParaFile::GetParentDirectoryFromPath(sModuleDir);
-		OUTPUT_LOG("NPL bin dir: %s\n", m_sModuleDir.c_str());
 		std::string packagesDir = m_sModuleDir + "packages";
 		if (!CParaFile::DoesFileExist(packagesDir.c_str(), false))
 		{
 			packagesDir = CParaFile::GetParentDirectoryFromPath(m_sModuleDir, 1) + "packages";
 			if (!CParaFile::DoesFileExist(packagesDir.c_str(), false))
 			{
-				OUTPUT_LOG("no packages at: %s\n", packagesDir.c_str());
 				packagesDir = "";
 			}
 		}
@@ -499,7 +754,7 @@ bool CParaEngineAppBase::FindParaEngineDirectory(const char* sHint)
 			}
 			else
 			{
-				OUTPUT_LOG("ParaEngine.sig file not found\n");
+				// OUTPUT_LOG("ParaEngine.sig file not found\n");
 			}
 		}
 		// set the current directory by reading from the registry.
@@ -513,7 +768,7 @@ bool CParaEngineAppBase::FindParaEngineDirectory(const char* sHint)
 		char sWorkingDir[512 + 1] = { 0 };
 		memset(sWorkingDir, 0, sizeof(sWorkingDir));
 		::GetCurrentDirectory(MAX_PATH, sWorkingDir);
-		OUTPUT_LOG("WorkingDir: %s\n", sWorkingDir);
+		m_sInitialWorkingDir = sWorkingDir;
 #ifdef PARAENGINE_MOBILE
 		CGlobals::GetFileManager()->AddDiskSearchPath(sWorkingDir);
 #endif

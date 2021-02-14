@@ -136,6 +136,8 @@ void CNPLScriptingState::LoadHAPI_UI()
 				def("UniSubString", &ParaMisc::UniSubString),
 				def("GetUnicodeCharNum", &ParaMisc::GetUnicodeCharNum),
 				def("EncodingConvert", &ParaMisc::EncodingConvert),
+				def("UTF16ToUTF8", &ParaMisc::UTF16ToUTF8),
+				def("UTF8ToUTF16", &ParaMisc::UTF8ToUTF16),
 				def("SimpleEncode", &ParaMisc::SimpleEncode),
 				def("SimpleDecode", &ParaMisc::SimpleDecode),
 				def("GetTextFromClipboard", &ParaMisc::GetTextFromClipboard),
@@ -143,7 +145,11 @@ void CNPLScriptingState::LoadHAPI_UI()
 				def("RandomDouble", &ParaMisc::RandomDouble),
 				def("RandomLong", &ParaMisc::RandomLong),
 				def("md5", &ParaMisc::md5_),
-				def("md5", &ParaMisc::md5)
+				def("md5", &ParaMisc::md5),
+				def("sha1", &ParaMisc::sha1),
+				def("sha1", &ParaMisc::sha1_),
+				def("base64", &ParaMisc::base64),
+				def("unbase64", &ParaMisc::unbase64)
 			]
 		];
 
@@ -211,6 +217,7 @@ void CNPLScriptingState::LoadHAPI_UI()
 				def("DrawTexture", &ParaPainter::DrawTexture2),
 				def("DrawText", &ParaPainter::DrawText),
 				def("DrawText", &ParaPainter::DrawText2),
+				def("DrawSceneObject", &ParaPainter::DrawSceneObject),
 				def("End", &ParaPainter::End)
 			]
 		];

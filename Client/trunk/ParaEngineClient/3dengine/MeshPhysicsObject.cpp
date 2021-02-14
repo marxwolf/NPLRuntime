@@ -304,6 +304,10 @@ void CMeshPhysicsObject::SetParamsFromAsset()
 			else
 				m_dwPhysicsMethod = PHYSICS_FORCE_NO_PHYSICS;
 		}
+		else if (IsPhysicsEnabled() && ((m_dwPhysicsMethod&PHYSICS_ALWAYS_LOAD) > 0))
+		{
+			LoadPhysics();
+		}
 
 		//if(GetTileContainer())
 		//{
@@ -406,8 +410,9 @@ void CMeshPhysicsObject::LoadPhysics()
 				EnablePhysics(false); // disable physics forever, if failed loading physics data
 				return;
 			}
-			const Matrix4 * pMatWorld = (m_pMeshObject->GetViewClippingObject())->GetWorldTransform();
-			IParaPhysicsActor* pActor =  CGlobals::GetPhysicsWorld()->CreateStaticMesh( m_pMeshObject->m_ppMesh.get(), *(pMatWorld), m_nPhysicsGroup, &m_staticActors, this);
+			Matrix4 matWorld;
+			m_pMeshObject->GetViewClippingObject()->GetWorldTransform(matWorld);
+			IParaPhysicsActor* pActor = CGlobals::GetPhysicsWorld()->CreateStaticMesh(m_pMeshObject->m_ppMesh.get(), matWorld, m_nPhysicsGroup, &m_staticActors, this);
 			if(pActor!=NULL)
 			{
 			}
@@ -444,7 +449,7 @@ void CMeshPhysicsObject::LoadPhysics()
 						if(bApplyPhysics)
 						{
 							Matrix4 mat;
-							pEntity->GetMatrix(mat, pMatWorld);
+							pEntity->GetMatrix(mat, &matWorld);
 							pActor =  CGlobals::GetPhysicsWorld()->CreateStaticMesh( ppMesh, mat, m_nPhysicsGroup, &m_staticActors, this);
 							if(pActor)
 							{
@@ -520,8 +525,12 @@ void ParaEngine::CMeshPhysicsObject::Animate( double dTimeDelta, int nRenderNumb
 
 HRESULT CMeshPhysicsObject::Draw( SceneState * sceneState)
 {
-	if (!m_pMeshObject || !IsVisible() || CheckAttribute(OBJ_CUSTOM_RENDERER))
+	if (!m_pMeshObject || !IsVisible())
 		return S_OK;
+	if (CheckAttribute(OBJ_CUSTOM_RENDERER)){
+		ViewTouch();
+		return S_OK;
+	}
 
 	bool bCheckAsset = (m_pMeshObject->GetPrimaryTechniqueHandle()<0);
 
@@ -534,6 +543,7 @@ HRESULT CMeshPhysicsObject::Draw( SceneState * sceneState)
 		m_pMeshObject->SetAttribute(MESH_USE_LIGHT, true);
 
 	SetFrameNumber(sceneState->m_nRenderCount);
+
 	//sceneState->pd3dDevice->SetRenderState( D3DRS_FILLMODE, D3DFILL_WIREFRAME );
 	HRESULT hr = m_pMeshObject->Draw(sceneState);
 	//sceneState->pd3dDevice->SetRenderState( D3DRS_FILLMODE, D3DFILL_SOLID );
@@ -546,15 +556,15 @@ HRESULT CMeshPhysicsObject::Draw( SceneState * sceneState)
 	return hr;
 }
 
-Matrix4* CMeshPhysicsObject::GetRenderWorldMatrix( Matrix4* pOut, int nRenderNumber)
+Matrix4* CMeshPhysicsObject::GetRenderMatrix(Matrix4& out, int nRenderNumber)
 {
 	if(m_pMeshObject)
 	{
 		m_pMeshObject->SetPosition(m_vPos);
 		m_pMeshObject->SetFacing(m_fYaw);
-		return m_pMeshObject->GetRenderWorldMatrix(pOut, nRenderNumber);
+		return m_pMeshObject->GetRenderMatrix(out, nRenderNumber);
 	}
-	return pOut;
+	return &out;
 }
 
 AssetEntity* CMeshPhysicsObject::GetPrimaryAsset()
@@ -769,7 +779,17 @@ int ParaEngine::CMeshPhysicsObject::GetPhysicsGroup()
 	return m_nPhysicsGroup;
 }
 
-void ParaEngine::CMeshPhysicsObject::SetPhysicsGroup( int nGroup )
+int ParaEngine::CMeshPhysicsObject::GetStaticActorCount()
+{
+	return (int)m_staticActors.size();
+}
+
+bool ParaEngine::CMeshPhysicsObject::CanHasPhysics()
+{
+	return true;
+}
+
+void ParaEngine::CMeshPhysicsObject::SetPhysicsGroup(int nGroup)
 {
 	PE_ASSERT(0<=nGroup && nGroup<32);
 	if(m_nPhysicsGroup != nGroup)
@@ -798,6 +818,18 @@ void ParaEngine::CMeshPhysicsObject::SetRadius( FLOAT fRadius )
 	CTileObject::SetRadius(fRadius);
 	if(m_pMeshObject)
 		m_pMeshObject->SetRadius(fRadius);
+}
+
+void ParaEngine::CMeshPhysicsObject::SetAlwaysLoadPhysics(bool bEnable)
+{
+	if (bEnable)
+	{
+		m_dwPhysicsMethod |= PHYSICS_ALWAYS_LOAD;
+	}
+	else
+	{
+		m_dwPhysicsMethod &= (~PHYSICS_ALWAYS_LOAD);
+	}
 }
 
 bool ParaEngine::CMeshPhysicsObject::ViewTouch()

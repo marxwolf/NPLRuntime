@@ -10,7 +10,6 @@
 #ifdef USE_DIRECTX_RENDERER
 #include "DirectXEngine.h"
 #include "SpriteObject.h"
-#include "StaticMesh.h"
 #include "ShadowMap.h"
 #include "GlowEffect.h"
 #include "DataProviderManager.h"
@@ -22,6 +21,8 @@
 #include "DropShadowRenderer.h"
 #include "OcclusionQueryBank.h"
 #include "WaveEffect.h"
+#elif defined(USE_OPENGL_RENDERER)
+#include "ShadowMap.h"
 #endif
 #include "PaintEngine/Painter.h"
 #include "ContainerObject.h"
@@ -66,7 +67,6 @@
 #include "SceneObject.h"
 #include "SunLight.h"
 #include "BufferPicking.h"
-
 #include "memdebug.h"
 
 /** @def shadow radius around the eye, larger than which shadows will not be considered.  */
@@ -142,7 +142,7 @@ m_dropShadowRenderer(new DropShadowRenderer()),
 #endif
 m_globalTerrain(new ParaTerrain::CGlobalTerrain()),
 m_sceneState(new ParaTerrain::SceneState()),
-m_dwPhysicsGroupMask(DEFAULT_PHYSICS_GROUP_MASK), m_renderDropShadow(false), m_bShowMainPlayer(true), m_bCanShowMainPlayer(true)
+m_dwPhysicsGroupMask(DEFAULT_PHYSICS_GROUP_MASK), m_renderDropShadow(false), m_bShowMainPlayer(true), m_bCanShowMainPlayer(true), m_fPostRenderQueueOrder(100.f)
 {
 #ifdef _DEBUG
 	// test local light
@@ -781,15 +781,7 @@ bool CSceneObject::DeleteObject(CBaseObject * pObject)
 
 void CSceneObject::UnloadObjectResources(CBaseObject * pObject)
 {
-	//ObjectType oType = pObject->GetType();
-	//switch(oType)
-	//{
-	//case CBaseObject::MeshPhysicsObject:
-	//	((CMeshPhysicsObject*)(pObject))->UnloadPhysics();
-	//	break;
-	//default:
-	//	
-	//}
+
 }
 
 void CSceneObject::DestroyObjectByName(const char * id)
@@ -1309,8 +1301,6 @@ int RemoveZoneObjects(T& renderlist)
 bool CSceneObject::PrepareRenderObject(CBaseObject* pObj, CBaseCamera* pCamera, SceneState& sceneState)
 {
 	IViewClippingObject* pViewClippingObject = pObj->GetViewClippingObject();
-	ObjectType oType =  pObj->GetMyType();
-
 	// fNewViewRadius is usually the camera far plane distance, however, it can be set to a smaller value according to the size of the object. 
 	float fNewViewRadius;
 	float fR = pViewClippingObject->GetRadius();
@@ -1352,19 +1342,8 @@ bool CSceneObject::PrepareRenderObject(CBaseObject* pObj, CBaseCamera* pCamera, 
 	{
 		bDrawObj = true;
 		
-		if(oType == _LocalLight)
-		{
-			// add local light to global light manager
-#ifdef USE_DIRECTX_RENDERER
-			PE_ASSERT(pObj->GetType() == CBaseObject::LightObject);
-			CGlobals::GetLightManager()->RegisterLight(((CLightObject*)pObj)->GetLightParams());
-
-			// only draw if the global local light flag is on.
-			bDrawObj = IsShowLocalLightMesh();
-#endif
-			return true;
-		}
-		else if(oType ==  _PC_Zone)
+		ObjectType oType = pObj->GetMyType();
+		if(oType ==  _PC_Zone)
 		{
 			bDrawObj = false;
 			sceneState.listZones.push_back(PostRenderObject(pObj, 0));
@@ -1422,7 +1401,9 @@ bool CSceneObject::PrepareRenderObject(CBaseObject* pObj, CBaseCamera* pCamera, 
 			if(bDrawObj)
 			{
 				PostRenderObject o(pObj, fObjectToCameraDist, sceneState.m_nOccluded);
-				if (!pObj->HasAlphaBlendedObjects())
+				if (pObj->GetRenderOrder() >= m_fPostRenderQueueOrder)
+					sceneState.listPostRenderingObjects.push_back(o);
+				else if (!pObj->HasAlphaBlendedObjects())
 					sceneState.listPRBiped.push_back(o);
 				else
 					sceneState.listPRTransparentBiped.push_back(o); 
@@ -1454,7 +1435,11 @@ bool CSceneObject::PrepareRenderObject(CBaseObject* pObj, CBaseCamera* pCamera, 
 				pObj->AutoSelectTechnique();
 				if(bDrawObj)
 				{
-					if(!pObj->HasAlphaBlendedObjects())
+					if (pObj->GetRenderOrder() >= m_fPostRenderQueueOrder){
+						PostRenderObject o(pObj, fObjectToCameraDist, sceneState.m_nOccluded);
+						sceneState.listPostRenderingObjects.push_back(o);
+					}
+					else if(!pObj->HasAlphaBlendedObjects())
 						sceneState.listPRSolidObject.push_back(PostRenderObject(pObj, fObjectToCameraDist, sceneState.m_nOccluded));
 					else
 					{
@@ -1484,7 +1469,12 @@ bool CSceneObject::PrepareRenderObject(CBaseObject* pObj, CBaseCamera* pCamera, 
 					fAlpha = 0.5f;
 				// TODO: fAlpha animation should be enabled, according to whether a object is drawn in last frame.
 				pObj->AutoSelectTechnique();
-				sceneState.listPRSmallObject.push_back(AlphaPostRenderObject(pObj, fObjectToCameraDist, sceneState.m_nOccluded, fAlpha));
+				if (pObj->GetRenderOrder() >= m_fPostRenderQueueOrder){
+					PostRenderObject o(pObj, fObjectToCameraDist, sceneState.m_nOccluded);
+					sceneState.listPostRenderingObjects.push_back(o);
+				}
+				else
+					sceneState.listPRSmallObject.push_back(AlphaPostRenderObject(pObj, fObjectToCameraDist, sceneState.m_nOccluded, fAlpha));
 				//nPostRenderType = 2;
 			}
 		}
@@ -1500,7 +1490,7 @@ bool CSceneObject::PrepareRenderObject(CBaseObject* pObj, CBaseCamera* pCamera, 
 			}
 		}
 	}
-	return true;
+	return bDrawObj;
 }
 
 void CSceneObject::PrepareTileObjects(CBaseCamera* pCamera, SceneState &sceneState)
@@ -1833,7 +1823,7 @@ int CSceneObject::PrepareRender(CBaseCamera* pCamera, SceneState* pSceneState)
 	//
 	//////////////////////////////////////////////////////////////////////////
 	sceneState.CleanupSceneState();
-	
+	sceneState.EnableGlobalLOD(IsLODEnabled());
 	sceneState.vEye = pCamera->GetEyePosition();
 	sceneState.vLookAt = pCamera->GetLookAtPosition();
 	
@@ -1927,6 +1917,9 @@ int CSceneObject::PrepareRender(CBaseCamera* pCamera, SceneState* pSceneState)
 	/** sort by the camera-object distance: back to front*/
 	std::sort(sceneState.listPRMissiles.begin(), sceneState.listPRMissiles.end(), GreaterPostRenderObj<AlphaPostRenderObject>());
 	sceneState.bIsBatchRender = true;
+
+	std::sort(sceneState.listPostRenderingObjects.begin(), sceneState.listPostRenderingObjects.end(), GreaterPostRenderObj_ByOrder<PostRenderObject>());
+	
 
 	if(CGlobals::WillGenReport())
 	{
@@ -2083,6 +2076,7 @@ HRESULT CSceneObject::AdvanceScene(double dTimeDelta, int nPipelineOrder)
 
 	globalTime =  (int)(CGlobals::GetGameTime()*1000);
 	SceneState& sceneState = *(m_sceneState.get());
+	
 	sceneState.SetCurrentRenderPipeline(nPipelineOrder);
 	RenderDevicePtr pd3dDevice = sceneState.m_pd3dDevice;
 
@@ -2334,6 +2328,8 @@ HRESULT CSceneObject::AdvanceScene(double dTimeDelta, int nPipelineOrder)
 		nCharacterRendered += RenderSelection(RENDER_CHARACTERS);
 	}
 
+	RenderSelection(RENDER_SELECTION);
+
 	//////////////////////////////////////////////////////////////////////////
 	/// Draw SkyBox : we shall render sky after terrain but before transparent meshes, to make z-buffer work better. 
 	if (!(sceneState.m_bSkipSky))
@@ -2348,10 +2344,10 @@ HRESULT CSceneObject::AdvanceScene(double dTimeDelta, int nPipelineOrder)
 		RenderSelection(RENDER_MISSILES);
 	}
 
-	m_pBlockWorldClient->Render(BlockRenderPass_ReflectedWater);
 	//////////////////////////////////////////////////////////////////////////
 	// deferred shading so far. 
-	BlockWorldClient::GetInstance()->DoPostRenderingProcessing(BlockRenderPass_Opaque);
+	m_pBlockWorldClient->DoPostRenderingProcessing(BlockRenderPass_Opaque);
+	m_pBlockWorldClient->Render(BlockRenderPass_ReflectedWater);
 
 	// draw transparent particles
 	m_pBatchedElementDraw->DrawBatchedParticles(true);
@@ -2364,7 +2360,9 @@ HRESULT CSceneObject::AdvanceScene(double dTimeDelta, int nPipelineOrder)
 		nCharacterRendered += RenderSelection(RENDER_TRANSPARENT_CHARACTERS);
 	}
 
-	BlockWorldClient::GetInstance()->DoPostRenderingProcessing(BlockRenderPass_AlphaBlended);
+	m_pBlockWorldClient->DoPostRenderingProcessing(BlockRenderPass_AlphaBlended);
+
+	m_pBlockWorldClient->RenderDeferredLights();
 
 	// draw the head on display GUI
 	RenderHeadOnDisplay(0);
@@ -2378,8 +2376,6 @@ HRESULT CSceneObject::AdvanceScene(double dTimeDelta, int nPipelineOrder)
 		sMeshReport[49] = '\0';
 		CGlobals::GetReport()->SetString("meshes", sMeshReport);
 	}
-
-	RenderSelection(RENDER_SELECTION);
 
 #ifdef USE_DIRECTX_RENDERER
 	//////////////////////////////////////////////////////////////////////////
@@ -2408,6 +2404,13 @@ HRESULT CSceneObject::AdvanceScene(double dTimeDelta, int nPipelineOrder)
 	{
 		RenderSelection(RENDER_TRANSLUCENT_FACE_GROUPS);
 		sceneState.GetFaceGroups()->Clear();
+	}
+
+	//////////////////////////////////////////////////////////////////////////
+	// render post rendering with render order
+	if (!sceneState.listPostRenderingObjects.empty())
+	{
+		RenderSelection(RENDER_POST_RENDER_LIST);
 	}
 
 	//////////////////////////////////////////////////////////////////////////
@@ -2953,6 +2956,10 @@ void CSceneObject::RegenerateRenderOrigin(const Vector3& vPos)
 	m_vRenderOrigin.x = (float)((int)vPos.x);
 	m_vRenderOrigin.y = (float)((int)vPos.y);
 	m_vRenderOrigin.z = (float)((int)vPos.z);
+
+	//m_vRenderOrigin.x = round(vPos.x);
+	//m_vRenderOrigin.y = round(vPos.y);
+	//m_vRenderOrigin.z = round(vPos.z);
 }
 CMissileObject* CSceneObject::NewMissile()
 {
@@ -2988,6 +2995,7 @@ bool CSceneObject::HandleUserInput()
 	MouseEvent mouse_up_event(0,0,0,-1);
 	MouseEvent mouse_move_event(0,0,0,-1);
 	MouseEvent mouse_click_event(0,0,0, -1);
+	MouseEvent mouse_wheel_event(0, 0, 0, -1);
 	KeyEvent key_event(0,0);
 
 	CDirectMouse* pMouse=CGlobals::GetGUI()->m_pMouse;
@@ -3056,6 +3064,16 @@ bool CSceneObject::HandleUserInput()
 							mouse_click_event.m_nEventType = EVENT_MOUSE;
 						}
 					}
+				}
+				else if ((mouse_wheel_event.m_nEventType == -1) && m_event->IsMapTo(pMsg->message, EM_MOUSE_WHEEL))
+				{
+					mouse_wheel_event.m_MouseState = pMsg->message;
+
+					// please note: mouse move is delta value. 
+					mouse_wheel_event.m_x = (int)pMsg->lParam / 120;
+					mouse_wheel_event.m_y = 0;
+
+					mouse_wheel_event.m_nEventType = EVENT_MOUSE_WHEEL;
 				}
 				
 			}
@@ -3129,6 +3147,8 @@ bool CSceneObject::HandleUserInput()
 	// call mouse click event handlers
 	if(mouse_click_event.m_nEventType>=0) 
 		CGlobals::GetEventsCenter()->FireEvent(mouse_click_event);
+	if (mouse_wheel_event.m_nEventType >= 0)
+		CGlobals::GetEventsCenter()->FireEvent(mouse_wheel_event);
 	//if(bHasKeyEvent)
 	//{ 
 	//	// key handlers
@@ -3629,6 +3649,14 @@ int CSceneObject::RenderSelection(DWORD dwSelection, double dTimeDelta)
 			}
 		}
 	}
+	if (CHECK_SELECTION(RENDER_POST_RENDER_LIST))
+	{
+		/// post rendering objects
+		if (!sceneState.listPostRenderingObjects.empty())
+		{
+			nObjCount += RenderList(sceneState.listPostRenderingObjects, sceneState);
+		}
+	}
 	// end the effect anyway.
 	// CGlobals::GetEffectManager()->EndEffect();
 	return nObjCount;
@@ -3679,7 +3707,7 @@ void CSceneObject::SetCurrentPlayer(CBipedObject* pPlayer)
 }
 void CSceneObject::SetShadowMapTexelSizeLevel(int nLevel)
 {
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	if(CGlobals::GetRenderDevice())
 	{
 		CShadowMap* pShadowMap = CGlobals::GetEffectManager()->GetShadowMap();
@@ -3697,7 +3725,7 @@ void CSceneObject::SetShadowMapTexelSizeLevel(int nLevel)
 
 void CSceneObject::SetShadowMapTexelSize(int nWidth, int nHeight)
 {
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	CShadowMap* pShadowMap = CGlobals::GetEffectManager()->GetShadowMap();
 	if(pShadowMap!=0) 
 	{
@@ -3710,7 +3738,7 @@ void CSceneObject::SetShadowMapTexelSize(int nWidth, int nHeight)
 void CSceneObject::SetShadow(bool bRenderShadow)
 {
 	m_bRenderMeshShadow = bRenderShadow;
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	if(bRenderShadow)
 	{
 		// never allow shadow rendering, if the shader version is below 20. 
@@ -3739,7 +3767,7 @@ bool CSceneObject::IsShadowMapEnabled()
 }
 void CSceneObject::RenderShadowMap()
 {
-#ifdef USE_DIRECTX_RENDERER
+#if defined(USE_DIRECTX_RENDERER)||defined(USE_OPENGL_RENDERER)
 	// render a blank image even if sceneState.listShadowCasters.empty() 
 	
 	SceneState& sceneState = *(m_sceneState.get());
@@ -4337,7 +4365,8 @@ int FilterScreenObjectToList(T& renderlist, list<CBaseObject*>& output, CPortalF
 
 int CSceneObject::GetObjectsByScreenRect( list<CBaseObject*>& output, const RECT& rect, OBJECT_FILTER_CALLBACK pFnctFilter/*=NULL*/, float fMaxDistance)
 {
-	if(rect.top >= rect.bottom || rect.left >= rect.right)
+	auto pViewportManager = CGlobals::GetViewportManager();
+	if(rect.top >= rect.bottom || rect.left >= rect.right || pViewportManager==0)
 	{
 		return 0;
 	}
@@ -4347,8 +4376,7 @@ int CSceneObject::GetObjectsByScreenRect( list<CBaseObject*>& output, const RECT
 	static CPortalFrustum g_frustum;
 	CPortalFrustum* pFrustum = &g_frustum;
 	
-	Matrix4 matWorld;
-	matWorld = Matrix4::IDENTITY;
+	const Matrix4& matWorld = Matrix4::IDENTITY;
 
 	POINT ptCursor[5];
 	Vector3 vPickRayOrig;
@@ -4357,35 +4385,35 @@ int CSceneObject::GetObjectsByScreenRect( list<CBaseObject*>& output, const RECT
 	int x = rect.left;
 	int y = rect.top;
 	int nWidth, nHeight;
-	CGlobals::GetViewportManager()->GetPointOnViewport(x, y, &nWidth, &nHeight);
+	pViewportManager->GetPointOnViewport(x, y, &nWidth, &nHeight);
 	ptCursor[0].x = x;
 	ptCursor[0].y = y;
 	pCamera->GetMouseRay(vPickRayOrig, vPickRayDir[0], ptCursor[0], nWidth, nHeight, &matWorld);
 
 	x = rect.right;
 	y = rect.top;
-	CGlobals::GetViewportManager()->GetPointOnViewport(x, y, &nWidth, &nHeight);
+	pViewportManager->GetPointOnViewport(x, y, &nWidth, &nHeight);
 	ptCursor[1].x = x;
 	ptCursor[1].y = y;
 	pCamera->GetMouseRay(vPickRayOrig, vPickRayDir[1], ptCursor[1], nWidth, nHeight, &matWorld);
 
 	x = rect.right;
 	y = rect.bottom;
-	CGlobals::GetViewportManager()->GetPointOnViewport(x, y, &nWidth, &nHeight);
+	pViewportManager->GetPointOnViewport(x, y, &nWidth, &nHeight);
 	ptCursor[2].x = x;
 	ptCursor[2].y = y;
 	pCamera->GetMouseRay(vPickRayOrig, vPickRayDir[2], ptCursor[2], nWidth, nHeight, &matWorld);
 
 	x = rect.left;
 	y = rect.bottom;
-	CGlobals::GetViewportManager()->GetPointOnViewport(x, y, &nWidth, &nHeight);
+	pViewportManager->GetPointOnViewport(x, y, &nWidth, &nHeight);
 	ptCursor[3].x = x;
 	ptCursor[3].y = y;
 	pCamera->GetMouseRay(vPickRayOrig, vPickRayDir[3], ptCursor[3], nWidth, nHeight, &matWorld);
 
 	x = 0;
 	y = 0;
-	CGlobals::GetViewportManager()->GetPointOnViewport(x, y, &nWidth, &nHeight);
+	pViewportManager->GetPointOnViewport(x, y, &nWidth, &nHeight);
 	ptCursor[4].x = x;
 	ptCursor[4].y = y;
 	pCamera->GetMouseRay(vPickRayOrig, vPickRayDir[4], ptCursor[4], nWidth, nHeight, &matWorld);
@@ -4394,24 +4422,26 @@ int CSceneObject::GetObjectsByScreenRect( list<CBaseObject*>& output, const RECT
 	for (int i=0;i<4;++i)
 	{
 		Vector3 vNormal;
-		vNormal = vPickRayDir[(i+1)%4].crossProduct(vPickRayDir[i]);
-		ParaVec3Normalize(&vNormal, &vNormal);
-		Plane plane(vPickRayOrig, vNormal);
+		auto nextIndex = (i + 1) % 4;
+		vNormal = vPickRayDir[nextIndex].crossProduct(vPickRayDir[i]);
+		vNormal.normalise();
+		Plane plane(vNormal, vPickRayOrig);
 		pFrustum->AddCullingPlane(plane);
 	}
 	// add the near and far plane at index 4 and 5, this is tricky, since we will use CanSeeObject_CompleteCull for testing
 	{
-		Vector3 vNormal = vPickRayDir[4];
-		ParaVec3Normalize(&vNormal, &vNormal);
+		Vector3& vNormal = vPickRayDir[4];
+		vNormal.normalise();
 
 		{
 			// near plane
-			Plane plane(vPickRayOrig+pCamera->GetNearPlane()*vNormal, vNormal);
+			Plane plane(vNormal, vPickRayOrig + (pCamera->GetNearPlane() * vNormal));
 			pFrustum->AddCullingPlane(plane, false);
 		}
 		{
 			// far plane
-			Plane plane(vPickRayOrig + ((fMaxDistance>0.f) ? fMaxDistance : pCamera->GetObjectFrustum()->GetViewDepth())*vNormal, -vNormal);
+			auto t1 = ((fMaxDistance > 0.f) ? fMaxDistance : pCamera->GetObjectFrustum()->GetViewDepth()) * vNormal;
+			Plane plane(-vNormal, vPickRayOrig + t1);
 			pFrustum->AddCullingPlane(plane, false);
 		}
 	}
@@ -4921,6 +4951,7 @@ int CSceneObject::InstallFields(CAttributeClass* pClass, bool bOverride)
 	pClass->AddField("Save ShadowMap", FieldType_void, (void*)ScreenShotShadowMap_s, NULL, NULL, NULL, bOverride);
 	pClass->AddField("Save GlowMap", FieldType_void, (void*)ScreenShotGlowMap_s, NULL, NULL, NULL, bOverride);
 #endif
+	pClass->AddField("ShadowMapSize", FieldType_Int, (void*)SetShadowMapTexelSize_s, NULL, NULL, NULL, bOverride);
 
 	return S_OK;
 }

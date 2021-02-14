@@ -15,6 +15,7 @@
 #include <boost/filesystem.hpp>
 #include "zlib.h"
 
+
 using namespace ParaEngine;
 
 namespace ParaEngine 
@@ -82,7 +83,7 @@ namespace ParaEngine
 	class ZipArchiveEntry : public CRefCounted 
 	{
 	public:
-		ZipArchiveEntry() : m_offsetOfCompressedData(0), m_offsetOfSerializedLocalFileHeader(0)
+		ZipArchiveEntry() : m_offsetOfCompressedData(0), m_offsetOfSerializedLocalFileHeader(0), m_pFile(nullptr)
 		{
 			memset(&m_localFileHeader, 0, sizeof(SZIPFileHeader));
 			m_localFileHeader.Sig = ZIP_CONST_LOCALHEADERSIG;
@@ -90,54 +91,10 @@ namespace ParaEngine
 
 		virtual ~ZipArchiveEntry() 
 		{
+			if (m_pFile)
+				delete m_pFile;
 		}
 	public:
-
-		/**@def CHUNK is simply the buffer size for feeding data to and pulling data from the zlib routines.
-		Larger buffer sizes would be more efficient, especially for inflate(). If the memory is available,
-		buffers sizes on the order of 128K or 256K bytes should be used. */
-		static const int NPL_ZLIB_CHUNK = 32768;
-
-		/** compress without zip header*/
-		static int Compress(std::string& outstring, const char* src, int nSrcSize, int compressionlevel = Z_DEFAULT_COMPRESSION)
-		{
-			z_stream zs;
-			memset(&zs, 0, sizeof(z_stream));
-
-			if (deflateInit2(&zs, compressionlevel, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY) != Z_OK)
-			{
-				OUTPUT_LOG("warning: NPLCodec::Compress deflateInit failed while compressing.\n");
-				return -1;
-			}
-
-			zs.next_in = (Bytef*)src;
-			// set the z_stream's input
-			zs.avail_in = nSrcSize;
-
-			int ret;
-			char outbuffer[NPL_ZLIB_CHUNK];
-			// retrieve the compressed bytes blockwise
-			do {
-				zs.next_out = reinterpret_cast<Bytef*>(outbuffer);
-				zs.avail_out = sizeof(outbuffer);
-
-				ret = deflate(&zs, Z_FINISH);
-
-				if (outstring.size() < zs.total_out) {
-					// append the block to the output string
-					outstring.append(outbuffer,
-						zs.total_out - outstring.size());
-				}
-			} while (ret == Z_OK);
-
-			deflateEnd(&zs);
-
-			if (ret != Z_STREAM_END) {
-				OUTPUT_LOG("warning: NPLCodec::Compress failed an error occurred that was not EOF.\n");
-				return -1;
-			}
-			return 1;
-		}
 
 		/**
 		* @param destFilename: filename in zip file
@@ -150,6 +107,18 @@ namespace ParaEngine
 				m_filename = filename;
 			}
 			m_localFileHeader.FilenameLength = static_cast<uint16_t>(m_destFilename.length());
+		}
+
+		/**
+		* @param destFilename: filename in zip file
+		* @param pFile: file data reader.
+		*/
+		void Init(const char* destFilename, CParaFile* pFile)
+		{
+			m_destFilename = destFilename;
+			m_localFileHeader.FilenameLength = static_cast<uint16_t>(m_destFilename.length());
+			m_filename = m_destFilename;
+			m_pFile = pFile;
 		}
 
 		void SerializeLocalFileHeader(CParaFile& file) 
@@ -169,33 +138,61 @@ namespace ParaEngine
 			// serialize body of compressed file
 			if (!IsDirectory()) 
 			{
-				CMemReadFile input(m_filename.c_str());
-				if (input.isOpen())
+				if (m_pFile)
 				{
-					std::string output;
-					output.reserve(input.getSize());
-					if (Compress(output, (const char*)input.getBuffer(), input.getSize()) == 1) 
 					{
-						m_localFileHeader.CompressionMethod = 8; // 8 for zip, 0 for no compression.
-						m_localFileHeader.DataDescriptor.UncompressedSize = input.getSize();
-						m_localFileHeader.DataDescriptor.CompressedSize = output.size();
+						std::string output;
+						output.reserve(m_pFile->getSize());
+						if (CZipWriter::Compress(output, (const char*)m_pFile->getBuffer(), m_pFile->getSize()) == 1)
+						{
+							m_localFileHeader.CompressionMethod = 8; // 8 for zip, 0 for no compression.
+							m_localFileHeader.DataDescriptor.UncompressedSize = m_pFile->getSize();
+							m_localFileHeader.DataDescriptor.CompressedSize = output.size();
 
-						GetFileTime(m_filename, &m_localFileHeader.LastModFileDate, &m_localFileHeader.LastModFileTime);
+							m_localFileHeader.LastModFileDate = m_localFileHeader.LastModFileTime = 0;
 
-						uint32_t crc = 0;
-						m_localFileHeader.DataDescriptor.CRC32 = crc32(crc, input.getBuffer(), input.getSize());
-						file.WriteString(output);
+							uint32_t crc = 0;
+							m_localFileHeader.DataDescriptor.CRC32 = crc32(crc, (const Bytef*)m_pFile->getBuffer(), m_pFile->getSize());
+							file.WriteString(output);
 
-						// actualize local file header
-						auto currentPos = file.getPos();
-						file.seek(m_offsetOfSerializedLocalFileHeader);
-						file.write(&m_localFileHeader, sizeof(SZIPFileHeader));
-						file.seek(currentPos);
+							// actualize local file header
+							auto currentPos = file.getPos();
+							file.seek(m_offsetOfSerializedLocalFileHeader);
+							file.write(&m_localFileHeader, sizeof(SZIPFileHeader));
+							file.seek(currentPos);
+						}
 					}
 				}
-				else 
+				else
 				{
-					OUTPUT_LOG("warning: failed to add file: %s to zip archive\n", m_filename.c_str());
+					CMemReadFile input(m_filename.c_str());
+					if (input.isOpen())
+					{
+						std::string output;
+						output.reserve(input.getSize());
+						if (CZipWriter::Compress(output, (const char*)input.getBuffer(), input.getSize()) == 1)
+						{
+							m_localFileHeader.CompressionMethod = 8; // 8 for zip, 0 for no compression.
+							m_localFileHeader.DataDescriptor.UncompressedSize = input.getSize();
+							m_localFileHeader.DataDescriptor.CompressedSize = output.size();
+
+							GetFileTime(m_filename, &m_localFileHeader.LastModFileDate, &m_localFileHeader.LastModFileTime);
+
+							uint32_t crc = 0;
+							m_localFileHeader.DataDescriptor.CRC32 = crc32(crc, input.getBuffer(), input.getSize());
+							file.WriteString(output);
+
+							// actualize local file header
+							auto currentPos = file.getPos();
+							file.seek(m_offsetOfSerializedLocalFileHeader);
+							file.write(&m_localFileHeader, sizeof(SZIPFileHeader));
+							file.seek(currentPos);
+						}
+					}
+					else
+					{
+						OUTPUT_LOG("warning: failed to add file: %s to zip archive\n", m_filename.c_str());
+					}
 				}
 			}
 		};
@@ -223,8 +220,10 @@ namespace ParaEngine
 		SZIPFileHeader m_localFileHeader;
 		size_t m_offsetOfCompressedData;
 		size_t m_offsetOfSerializedLocalFileHeader;
+
 		std::string m_destFilename;
 		std::string m_filename;
+		CParaFile* m_pFile;
 	};
 }
 
@@ -233,6 +232,53 @@ namespace ParaEngine
 /// CZipWriter
 ///
 /////////////////////////////////////////////
+
+/** compress without zip header*/
+int CZipWriter::Compress(std::string& outstring, const char* src, int nSrcSize, int compressionlevel)
+{
+	/**@def CHUNK is simply the buffer size for feeding data to and pulling data from the zlib routines.
+	Larger buffer sizes would be more efficient, especially for inflate(). If the memory is available,
+	buffers sizes on the order of 128K or 256K bytes should be used. */
+	static const int NPL_ZLIB_CHUNK = 32768;
+
+	z_stream zs;
+	memset(&zs, 0, sizeof(z_stream));
+
+	if (deflateInit2(&zs, compressionlevel, Z_DEFLATED, -MAX_WBITS, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+	{
+		OUTPUT_LOG("warning: NPLCodec::Compress deflateInit failed while compressing.\n");
+		return -1;
+	}
+
+	zs.next_in = (Bytef*)src;
+	// set the z_stream's input
+	zs.avail_in = nSrcSize;
+
+	int ret;
+	char outbuffer[NPL_ZLIB_CHUNK];
+	// retrieve the compressed bytes blockwise
+	do {
+		zs.next_out = reinterpret_cast<Bytef*>(outbuffer);
+		zs.avail_out = sizeof(outbuffer);
+
+		ret = deflate(&zs, Z_FINISH);
+
+		if (outstring.size() < zs.total_out) {
+			// append the block to the output string
+			outstring.append(outbuffer,
+				zs.total_out - outstring.size());
+		}
+	} while (ret == Z_OK);
+
+	deflateEnd(&zs);
+
+	if (ret != Z_STREAM_END) {
+		OUTPUT_LOG("warning: NPLCodec::Compress failed an error occurred that was not EOF.\n");
+		return -1;
+	}
+	return 1;
+}
+
 
 CZipWriter::CZipWriter()
 {
@@ -266,6 +312,15 @@ void ParaEngine::CZipWriter::InitNewZip(const char * filename, const char * pass
 {
 	m_filename = filename;
 	m_password = password ? password : "";
+}
+
+
+DWORD CZipWriter::ZipAdd(const char* destFilename, CParaFile* pFile)
+{
+	auto* pEntry = new ZipArchiveEntry();
+	pEntry->Init(destFilename, pFile);
+	m_entries.push_back(pEntry);
+	return 0;
 }
 
 DWORD CZipWriter::ZipAdd(const char* destFilename, const char* filename)
@@ -311,8 +366,10 @@ DWORD CZipWriter::AddDirectory(const char* dstzn, const char* filepattern, int n
 		int nNum = result->GetNumOfResult();
 		for (int i = 0; i < nNum; ++i)
 		{
-			string item = result->GetItem(i);
-			if (CParaFile::GetFileExtension(item) != "")
+			auto itemData = result->GetItemData(i);
+			const string& item = itemData->m_sFileName;
+
+			if (!itemData->IsDirectory())
 			{
 				DWORD result = ZipAdd((sDestFolder + item).c_str(), (rootpath + item).c_str());
 
@@ -349,9 +406,13 @@ DWORD CZipWriter::AddDirectory(const char* dstzn, const char* filepattern, int n
 			{
 				if (!item.empty())
 				{
-					if (ZipAddFolder((sDestFolder + item).c_str()) != ZIP_OK)
+					auto path = sDestFolder + item;
+					if (item[item.size() - 1] != '/')
+						path += "/";
+
+					if (ZipAddFolder(path.c_str()) != ZIP_OK)
 					{
-						OUTPUT_LOG("warning: unable to add folder %s to zip. \n", (sDestFolder + item).c_str());
+						OUTPUT_LOG("warning: unable to add folder %s to zip. \n", path.c_str());
 					}
 				}
 			}

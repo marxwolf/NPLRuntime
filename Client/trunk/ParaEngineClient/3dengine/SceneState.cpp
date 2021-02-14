@@ -13,6 +13,7 @@
 #include "SortedFaceGroups.h"
 #include "BaseObject.h"
 #include "ParaXModel/particle.h"
+#include "LightObject.h"
 #include "SceneState.h"
 
 /** reference type in scene state */
@@ -26,8 +27,7 @@ namespace ParaEngine
 	SceneState::SceneState(IScene * pScene)
 		:fAlphaFactor(1.0f), bIsBatchRender(false), m_bCameraMoved(true), m_bDeferredShading(false), m_nCurrentRenderPipeline(0),
 		m_pCurrentEffect(NULL), m_nRenderCount(0), m_pScene(pScene), m_nOccluded(0), m_pBatchedDrawer(NULL), m_renderState(RenderState_Standard),
-		m_bEnableTranslucentFaceSorting(false), m_fShadowMapCameraToObjectDistance(500.f), m_bIsShadowPass(false), m_bOuterWorldZoneVisible(true), m_bIgnoreTransparent(false), m_nCurRenderGroup(0), m_bUseLocalMaterial(false)	
-
+		m_bEnableTranslucentFaceSorting(false), m_fShadowMapCameraToObjectDistance(500.f), m_bIsShadowPass(false), m_bOuterWorldZoneVisible(true), m_bIgnoreTransparent(false), m_nCurRenderGroup(0), m_bUseLocalMaterial(false), m_bGlobalLOD(true)
 	{
 		m_pCurrentSceneObject = NULL;
 		fViewCullingRadius = OBJ_UNIT*20; // default to 20 meters round the eye
@@ -84,6 +84,7 @@ namespace ParaEngine
 		listHeadonDisplayObject.clear();
 		listShadowReceivers.clear();
 		listShadowCasters.clear();
+		listDeferredLightObjects.clear();
 
 		m_SortedFaceGroups.Clear();
 		//listParticleSystems.clear();
@@ -105,6 +106,7 @@ namespace ParaEngine
 		m_bIgnoreTransparent = false;
 		m_bUseLocalMaterial = false;
 		m_bDeferredShading = false;
+		EnableGlobalLOD(true);
 		m_curLightStrength = Vector3(1.f,0,0);
 		m_renderState = RenderState_Standard;
 		{
@@ -241,6 +243,11 @@ namespace ParaEngine
 		return m_bIsShadowPass ? m_fShadowMapCameraToObjectDistance : m_fCameraToObjectDistance;
 	}
 
+	bool SceneState::IsLODEnabled()
+	{
+		return IsGlobalLODEnabled() && (m_pCurrentSceneObject && m_pCurrentSceneObject->IsLODEnabled());
+	}
+
 	void SceneState::SetShadowMapCameraToCurObjectDistance( float fDist )
 	{
 		m_fShadowMapCameraToObjectDistance = fDist;
@@ -344,6 +351,21 @@ namespace ParaEngine
 	void SceneState::SetCurrentRenderPipeline(int val)
 	{
 		m_nCurrentRenderPipeline = val;
+	}
+
+	void SceneState::AddToDeferredLightPool(CLightObject * lightObject)
+	{
+		listDeferredLightObjects.push_back(lightObject);
+	}
+
+	bool SceneState::IsGlobalLODEnabled() const
+	{
+		return m_bGlobalLOD;
+	}
+
+	void SceneState::EnableGlobalLOD(bool val)
+	{
+		m_bGlobalLOD = val;
 	}
 
 	ParaEngine::SceneStateRenderState SceneState::GetRenderState() const

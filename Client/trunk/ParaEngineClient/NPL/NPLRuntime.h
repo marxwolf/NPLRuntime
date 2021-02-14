@@ -99,6 +99,10 @@ namespace NPL
 		virtual int GetChildAttributeObjectCount(int nColumnIndex = 0);
 		virtual ParaEngine::IAttributeFields* GetChildAttributeObject(int nRowIndex, int nColumnIndex = 0);
 
+		ATTRIBUTE_METHOD1(CNPLRuntime, IsServerStarted_s, bool*) { *p1 = cls->IsServerStarted(); return S_OK; }
+		ATTRIBUTE_METHOD1(CNPLRuntime, GetHostIP_s, const char**) { *p1 = cls->GetHostIP().c_str(); return S_OK; }
+		ATTRIBUTE_METHOD1(CNPLRuntime, GetHostPort_s, const char**) { *p1 = cls->GetHostPort().c_str(); return S_OK; }
+
 		ATTRIBUTE_METHOD1(CNPLRuntime, IsTCPKeepAliveEnabled_s, bool*)	{*p1 = cls->IsTCPKeepAliveEnabled(); return S_OK;}
 		ATTRIBUTE_METHOD1(CNPLRuntime, SetTCPKeepAlive_s, bool)	{cls->SetTCPKeepAlive(p1); return S_OK;}
 
@@ -120,6 +124,12 @@ namespace NPL
 		ATTRIBUTE_METHOD1(CNPLRuntime, IsAnsiMode_s, bool*)	{*p1 = cls->IsAnsiMode(); return S_OK;}
 		ATTRIBUTE_METHOD1(CNPLRuntime, EnableAnsiMode_s, bool)	{cls->EnableAnsiMode(p1); return S_OK;}
 
+		ATTRIBUTE_METHOD1(CNPLRuntime, GetMaxPendingConnections_s, int*)	{ *p1 = cls->GetMaxPendingConnections(); return S_OK; }
+		ATTRIBUTE_METHOD1(CNPLRuntime, SetMaxPendingConnections_s, int)	{ cls->SetMaxPendingConnections(p1); return S_OK; }
+			
+		ATTRIBUTE_METHOD1(CNPLRuntime, GetLogLevel_s, int*) { *p1 = cls->GetLogLevel(); return S_OK; }
+		ATTRIBUTE_METHOD1(CNPLRuntime, SetLogLevel_s, int) { cls->SetLogLevel(p1); return S_OK; }
+		
 	public:
 		/** whether to use compression on transport layer for incoming and outgoing connections
 		* @param bCompressIncoming: if true, compression is used for all incoming connections. default to false.
@@ -141,7 +151,7 @@ namespace NPL
 		*/
 		virtual void SetCompressionKey(const byte* sKey=0, int nSize=0, int nUsePlainTextEncoding = 0);
 
-		/** Set the zlib compression level to use in case compresssion is enabled. 
+		/** Set the zlib compression level to use in case compression is enabled. 
 		* default to 0, which means no compression. Compression level, which is an integer in the range of -1 to 9. 
 		* Lower compression levels result in faster execution, but less compression. Higher levels result in greater compression, 
 		* but slower execution. The zlib constant Z_DEFAULT_COMPRESSION, equal to -1, provides a good compromise between compression 
@@ -204,6 +214,19 @@ namespace NPL
 		so client side applications are encouraged to disable ansi mode. */
 		virtual void EnableAnsiMode(bool bEnable);
 		virtual bool IsAnsiMode();
+
+		/** queue size of the server acceptor's queue. */
+		virtual int GetMaxPendingConnections();
+		virtual void SetMaxPendingConnections(int val);
+
+
+		/** get the host port of this NPL runtime */
+		virtual const std::string& GetHostPort();
+		/** get the host IP of this NPL runtime */
+		virtual const std::string& GetHostIP();
+		/** whether the NPL runtime's http server is started. */
+		virtual bool IsServerStarted();
+		
 
 		//////////////////////////////////////////////////////////////////////////
 		//
@@ -329,10 +352,16 @@ namespace NPL
 		*/
 		void NPL_accept(const char* tid, const char* nid = NULL);
 
+		/** set transmission protocol, default value is 0. */
+		void NPL_SetProtocol(const char* nid, int protocolType = 0);
+
 		/** reject and close a given connection. The connection will be closed once rejected. 
 		* [thread safe]
 		* @param nid: the temporary id or NID of the connection to be rejected. usually it is from msg.tid or msg.nid. 
-		* @param nReason: default to 0. if 1 it means connection overridden
+		* @param nReason: default to 0. 
+		* - 0 or positive value is forcibly reset/disconnect (it will abort pending read/write immediately).
+		* - 1 is another user with same nid is authenticated. The server should send a message to tell the client about this.
+		* - -1 or negative value means gracefully close the connection when all pending data has been sent.
 		*/
 		void NPL_reject(const char* nid, int nReason = 0);
 
@@ -577,7 +606,13 @@ namespace NPL
 		* This function is called automatically when a new activation occurs.So only call this function if one wants to override the old one for special code logics.
 		* @param sName This is usually "" for local activation and some kind of "name@server" for network activation.
 		*/
-		void NPL_SetSourceName(const char* sName);;
+		void NPL_SetSourceName(const char* sName);
+
+		/* default to 1, set to 0 to silence some connection verbose log. */
+		int GetLogLevel() const;
+
+		/* default to 1, set to 0 to silence some connection verbose log. */
+		void SetLogLevel(int val);
 
 	private: // methods
 		/** load the web service plug-in. */
@@ -660,10 +695,10 @@ namespace NPL
 		/** default channel. default value is 0*/
 		int m_nDefaultChannel;
 		/** an array of channel property. m_channelProperties[channelID]. The m_channelProperties is initialized with 16 channels.*/
-		vector<ChannelProperty> m_channelProperties;
+		std::vector<ChannelProperty> m_channelProperties;
 
 		/** a mapping from web service URL to its callback sCode */
-		map <string, string> m_mapWebServiceCallBacks;
+		std::map <string, string> m_mapWebServiceCallBacks;
 
 		/** a manager interface for NPL web service client.*/
 		ParaEngine::INPLWebServiceClient* m_pWebServiceClient;
@@ -676,6 +711,8 @@ namespace NPL
 		*/
 		bool m_bHostMainStatesInFrameMove;
 
+		/* default to 1, set to 0 to silence some connection verbose log. */
+		int m_nLogLevel;
 	private:
 		typedef std::set<NPLRuntimeState_ptr, NPLRuntimeState_PtrOps>	NPLRuntime_Pool_Type;
 		typedef std::vector<NPLRuntimeState_ptr>	NPLRuntime_Temp_Pool_Type;

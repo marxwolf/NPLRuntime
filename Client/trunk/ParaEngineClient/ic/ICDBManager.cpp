@@ -172,7 +172,7 @@ DBEntity* CICDBManager::OpenDBEntity(const char16_t* name, const char16_t* dbnam
 
 DBEntity* CICDBManager::OpenDBEntity(const char* dbname)
 {
-	return OpenDBEntity(dbname, dbname);
+	return OpenDBEntity(ParaEngine::StringHelper::AnsiToUTF8(dbname), dbname);
 }
 
 DBEntity* CICDBManager::OpenDBEntity(const char16_t* dbname)
@@ -299,18 +299,20 @@ string DBEntity::PrepareDatabaseFile(const string& filename)
 	return sTempDiskFilename;
 
 #else
+	std::string sOutputFilename = filename;
 	if(filename == ":memory:")
 	{
 		return filename;
 	}
-	else if( ParaEngine::CParaFile::DoesFileExist(filename.c_str(), false) &&
-		((ParaEngine::CParaFile::GetDiskFilePriority()>=0 || !ParaEngine::CFileManager::GetInstance()->DoesFileExist(filename.c_str()))) )
+	else if( ParaEngine::CParaFile::DoesFileExist2(filename.c_str(), 0xffff, &sOutputFilename) &&
+		((ParaEngine::CParaFile::GetDiskFilePriority()>=0 || !ParaEngine::CParaFile::DoesFileExist2(filename.c_str(), ParaEngine::FILE_ON_ZIP_ARCHIVE))) )
 	{
 		// disk file exist and (disk file has priority or zip file does not contain the file).
-		ParaEngine::CAsyncLoader::GetSingleton().log(string("DBEntity.PrepareDatabaseFile using local file:") + filename + "\n");
+		string sTmp = string("DBEntity.PrepareDatabaseFile using local file:") + sOutputFilename + "\n";
+		ParaEngine::CAsyncLoader::GetSingleton().log(sTmp);
 #ifdef WIN32
 		// remove read only file attribute. This is actually not necessary, but just leaves here for debugging purposes. 
-		DWORD dwAttrs = ::GetFileAttributes(filename.c_str());
+		DWORD dwAttrs = ::GetFileAttributes(sOutputFilename.c_str());
 		if (dwAttrs == INVALID_FILE_ATTRIBUTES)
 		{
 		}
@@ -320,7 +322,7 @@ string DBEntity::PrepareDatabaseFile(const string& filename)
 			m_nSQLite_OpenFlags = SQLITE_OPEN_READONLY;
 		}
 #endif
-		return filename;
+		return sOutputFilename;
 	}
 	else
 	{
@@ -391,6 +393,7 @@ void DBEntity::OpenDB(const char* dbname)
 	}
 	int errcode;
 
+
 	string diskfileName = PrepareDatabaseFile(dbname);
 	if(diskfileName=="")
 	{
@@ -405,7 +408,7 @@ void DBEntity::OpenDB(const char* dbname)
 		SetCreateFile(true);
 	}
 
-	string UTF8_Name = ::ParaEngine::StringHelper::AnsiToUTF8(diskfileName.c_str());
+	string UTF8_Name = ParaEngine::StringHelper::AnsiToUTF8(diskfileName.c_str());
 	
 	int nMaxRetryTimes = IsCreateFile() ? 1 : 3;
 
@@ -434,7 +437,7 @@ void DBEntity::OpenDB(const char* dbname)
 	m_isValid=true;
 	m_bEncodingUTF8 = true;
 
-	OUTPUT_LOG("database:%s opened\n", GetConnectionString().c_str());
+	OUTPUT_LOG("database:%s (%s) opened\n", GetConnectionString().c_str(), GetConnectionString() == diskfileName ? "" : diskfileName.c_str());
 }
 void DBEntity::OpenDB16(const char16_t* dbname)
 {
@@ -465,7 +468,7 @@ void DBEntity::OpenDB16(const char16_t* dbname)
 	m_stmt=NULL;
 	m_isValid=true;
 	m_bEncodingUTF8 = false;
-	OUTPUT_LOG("database:%s opened\n", GetConnectionString().c_str());
+	OUTPUT_LOG("database:%s (%s) opened\n", GetConnectionString().c_str(), GetConnectionString() == diskfileName ? "" : diskfileName.c_str());
 }
 void DBEntity::OpenDB()
 {

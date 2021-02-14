@@ -17,16 +17,25 @@
 using namespace ParaEngine;
 
 
+ParaEngine::ModelRenderPass::ModelRenderPass()
+{
+	memset(this, 0, sizeof(ModelRenderPass));
+}
+
 bool ParaEngine::ModelRenderPass::init_bmax_FX(CParaXModel *m, SceneState* pSceneState, CParameterBlock* pMaterialParams /*= NULL*/)
 {
 	if (m->showGeosets[geoset] == false || indexCount == 0)
 		return false;
 	float materialAlpha = 1.f;
+	bool nozwrite_ = nozwrite;
 	if (pMaterialParams != NULL)
 	{
 		CParameter* pParams = pMaterialParams->GetParameter("g_opacity");
 		if (pParams)
 			materialAlpha = (float)(*pParams);
+		pParams = pMaterialParams->GetParameter("zwrite");
+		if (pParams && (bool)(*pParams) == false)
+			nozwrite_ = true;
 	}
 	if (materialAlpha <= 0.f)
 		return false;
@@ -47,7 +56,7 @@ bool ParaEngine::ModelRenderPass::init_bmax_FX(CParaXModel *m, SceneState* pScen
 	return true;
 }
 
-void ParaEngine::ModelRenderPass::deinit_bmax_FX(SceneState* pSceneState)
+void ParaEngine::ModelRenderPass::deinit_bmax_FX(SceneState* pSceneState, CParameterBlock* pMaterialParams /*= NULL*/)
 {
 	if ((blendmode & BM_TEMP_FORCEALPHABLEND) == BM_TEMP_FORCEALPHABLEND)
 	{
@@ -88,11 +97,15 @@ bool ModelRenderPass::init_FX(CParaXModel *m, SceneState* pSceneState,CParameter
 	}
 
 	float materialAlpha = 1.f;
+	bool nozwrite_ = nozwrite;
 	if(pMaterialParams != NULL)
 	{
 		CParameter* pParams = pMaterialParams->GetParameter("g_opacity");
 		if(pParams)
 			materialAlpha = (float)(*pParams);
+		pParams = pMaterialParams->GetParameter("zwrite");
+		if (pParams && (bool)(*pParams) == false)
+			nozwrite_ = true;
 	}
 	ocol.w *= materialAlpha;
 
@@ -102,7 +115,7 @@ bool ModelRenderPass::init_FX(CParaXModel *m, SceneState* pSceneState,CParameter
 
 	/// Set the texture
 	TextureEntity* bindtex = NULL;
-	if (m->specialTextures[tex]==-1) 
+	if (tex >= CParaXModel::MAX_MODEL_TEXTURES || m->specialTextures[tex] == -1)
 		bindtex = m->textures[tex].get();
 	else 
 	{
@@ -153,7 +166,7 @@ bool ModelRenderPass::init_FX(CParaXModel *m, SceneState* pSceneState,CParameter
 			break;
 		}
 
-		if (nozwrite) {
+		if (nozwrite_) {
 			CGlobals::GetEffectManager()->EnableZWrite(false);
 		}
 
@@ -203,6 +216,12 @@ bool ModelRenderPass::init_FX(CParaXModel *m, SceneState* pSceneState,CParameter
 			//pEffect->setParameter(CEffectFile::k_ConstVector0, (const float*)&Vector4(0.00000f,0.242f, 0.f, 0.f));
 		}
 
+		if (GetCategoryId() > 0)
+		{
+			Vector4 v((float)GetCategoryId(), 0.f, 0.f, 0.f);
+			pEffect->setParameter(CEffectFile::k_ConstVector1, &v);
+		}
+
 		if (pEffect->isParameterUsed(CEffectFile::k_transitionFactor) && pMaterialParams != NULL)
 		{
 
@@ -222,16 +241,23 @@ bool ModelRenderPass::init_FX(CParaXModel *m, SceneState* pSceneState,CParameter
 
 	if(is_rigid_body)
 	{
-		Matrix4 mat, mat1;
-		mat1 = m->bones[(m->m_origVertices[m->m_indices[m_nIndexStart]]).bones[0]].mat;
-		mat = mat1 * CGlobals::GetWorldMatrixStack().SafeGetTop();
-		CGlobals::GetWorldMatrixStack().push(mat);
+		if (m->GetObjectNum().nBones > 0)
+		{
+			Matrix4 mat, mat1;
+			mat1 = m->bones[(m->m_origVertices[m->m_indices[m_nIndexStart] + GetVertexStart(m)]).bones[0]].mat;
+			mat = mat1 * CGlobals::GetWorldMatrixStack().SafeGetTop();
+			CGlobals::GetWorldMatrixStack().push(mat);
+		}
+		else
+		{
+			CGlobals::GetWorldMatrixStack().push(CGlobals::GetWorldMatrixStack().SafeGetTop());
+		}
 		pEffect->applyWorldMatrices();
 	}
 
 	return true;
 }
-void ModelRenderPass::deinit_FX(SceneState* pSceneState)
+void ModelRenderPass::deinit_FX(SceneState* pSceneState, CParameterBlock* pMaterialParams /*= NULL*/)
 {
 	RenderDevicePtr pd3dDevice = CGlobals::GetRenderDevice();
 	CEffectFile* pEffect = CGlobals::GetEffectManager()->GetCurrentEffectFile();
@@ -240,6 +266,14 @@ void ModelRenderPass::deinit_FX(SceneState* pSceneState)
 	{
 		CGlobals::GetWorldMatrixStack().pop();
 		pEffect->applyWorldMatrices();
+	}
+	bool nozwrite_ = nozwrite;
+	if (pMaterialParams != NULL)
+	{
+		CParameter* pParams = NULL;
+		pParams = pMaterialParams->GetParameter("zwrite");
+		if (pParams && (bool)(*pParams) == false)
+			nozwrite_ = true;
 	}
 	if (!pSceneState->IsShadowPass())
 	{
@@ -264,7 +298,7 @@ void ModelRenderPass::deinit_FX(SceneState* pSceneState)
 		default:
 			break;
 		}
-		if (nozwrite) {
+		if (nozwrite_) {
 			CGlobals::GetEffectManager()->EnableZWrite(true);
 		}
 
@@ -281,6 +315,10 @@ void ModelRenderPass::deinit_FX(SceneState* pSceneState)
 		if (opacity != -1)
 		{
 			pEffect->setFloat(CEffectFile::k_opacity, 1.f);
+		}
+		if (GetCategoryId() > 0)
+		{
+			pEffect->setParameter(CEffectFile::k_ConstVector1, &Vector4::ZERO);
 		}
 
 		if ((blendmode & BM_TEMP_FORCEALPHABLEND) == BM_TEMP_FORCEALPHABLEND)
@@ -469,11 +507,19 @@ bool ModelRenderPass::init(CParaXModel *m, SceneState* pSceneState)
 
 	if(is_rigid_body)
 	{
-		Matrix4 mat, mat1;
-		mat1 = m->bones[(m->m_origVertices[m->m_indices[m_nIndexStart]]).bones[0]].mat;
-		mat = mat1 * CGlobals::GetWorldMatrixStack().SafeGetTop();
-		CGlobals::GetWorldMatrixStack().push(mat);
-		pd3dDevice->SetTransform(D3DTS_WORLD, mat.GetConstPointer());
+		if (m->GetObjectNum().nBones > 0)
+		{
+			Matrix4 mat, mat1;
+			mat1 = m->bones[(m->m_origVertices[m->m_indices[m_nIndexStart] + GetVertexStart(m)]).bones[0]].mat;
+			mat = mat1 * CGlobals::GetWorldMatrixStack().SafeGetTop();
+			CGlobals::GetWorldMatrixStack().push(mat);
+			pd3dDevice->SetTransform(D3DTS_WORLD, mat.GetConstPointer());
+		}
+		else
+		{
+			CGlobals::GetWorldMatrixStack().push(CGlobals::GetWorldMatrixStack().SafeGetTop());
+			pd3dDevice->SetTransform(D3DTS_WORLD, CGlobals::GetWorldMatrixStack().SafeGetTop().GetConstPointer());
+		}
 	}
 #endif
 	return true;
@@ -543,6 +589,17 @@ bool ParaEngine::ModelRenderPass::IsAlphaBlended()
 	return blendmode != BM_OPAQUE && blendmode != BM_TRANSPARENT;
 }
 
+int ParaEngine::ModelRenderPass::GetPhysicsGroup()
+{
+	// TODO: support more physics group?
+	return 0;
+}
+
+bool ParaEngine::ModelRenderPass::hasPhysics()
+{
+	return force_physics || (!IsAlphaBlended() && !disable_physics);
+}
+
 void ParaEngine::ModelRenderPass::SetStartIndex(int32 nIndex)
 {
 	m_nIndexStart = nIndex;
@@ -557,5 +614,23 @@ int32 ParaEngine::ModelRenderPass::GetStartIndex()
 int32 ParaEngine::ModelRenderPass::GetVertexStart(CParaXModel *m)
 {
 	return m->geosets[geoset].GetVertexStart();
+}
+
+int32 ParaEngine::ModelRenderPass::GetCategoryId()
+{
+	return has_category_id ? (int)m_fCategoryID : 0;
+}
+
+void ParaEngine::ModelRenderPass::SetCategoryId(int32 nCategoryID)
+{
+	if (nCategoryID == 0)
+	{
+		has_category_id = false;
+	}
+	else
+	{
+		m_fCategoryID = (float)nCategoryID;
+		has_category_id = true;
+	}
 }
 

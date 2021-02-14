@@ -9,8 +9,13 @@
 #ifdef USE_DIRECTX_RENDERER
 #include "DirectXEngine.h"
 #include "ScreenShotSystem.h"
+#ifdef USE_FREEIMAGE
+#include <FreeImage.h>
+#endif
+#include "util/CyoEncode.h"
 using namespace ScreenShot;
 #endif
+#include <thread>
 #include "VertexFVF.h"
 #include "SceneState.h"
 #include "SceneObject.h"
@@ -27,11 +32,11 @@ using namespace ScreenShot;
 
 using namespace ParaEngine;
 
-/** the movie codec plugin dll file name. It will be translated to libNPLMono.so under linux automatically. */
+/** the movie codec plugin dll file name. We will try these location in order */
 #ifdef _DEBUG
-	const char* MOVIE_CODEC_DLL_FILE_PATH = "MovieCodecPlugin_d.dll";
+	const char* MOVIE_CODEC_DLL_FILE_PATHS[] = { "Mod/MovieCodecPlugin/MovieCodecPlugin_d.dll",  "Mod/MovieCodecPlugin/MovieCodecPlugin.dll", "MovieCodecPlugin_d.dll" };
 #else
-	const char* MOVIE_CODEC_DLL_FILE_PATH = "MovieCodecPlugin.dll";
+	const char* MOVIE_CODEC_DLL_FILE_PATHS[] = { "Mod/MovieCodecPlugin/MovieCodecPlugin.dll", "MovieCodecPlugin.dll" };
 #endif
 
 /** the MOVIE_CODEC class interface id. */
@@ -100,32 +105,38 @@ IMovieCodec* CMoviePlatform::GetMovieCodec(bool bCreateIfNotExist)
 		{
 			s_bIsLoaded = true;
 
-			ParaEngine::DLLPlugInEntity* pPluginEntity = CGlobals::GetPluginManager()->GetPluginEntity(MOVIE_CODEC_DLL_FILE_PATH);
-
-			if (pPluginEntity == 0)
+			ParaEngine::DLLPlugInEntity* pPluginEntity = NULL;
+			for (int i = 0; m_pMovieCodec == 0 && i < sizeof(MOVIE_CODEC_DLL_FILE_PATHS) / sizeof(const char*); ++i)
 			{
-				// load the plug-in if it has never been loaded before. 
-				pPluginEntity = ParaEngine::CGlobals::GetPluginManager()->LoadDLL("", MOVIE_CODEC_DLL_FILE_PATH);
-			}
+				const char* sFilename = MOVIE_CODEC_DLL_FILE_PATHS[i];
 
-			if (pPluginEntity != 0)
-			{
-				if (pPluginEntity->GetLibVersion() >= 3)
+				pPluginEntity = CGlobals::GetPluginManager()->GetPluginEntity(sFilename);
+
+				if (pPluginEntity == 0)
 				{
-					for (int i = 0; i < pPluginEntity->GetNumberOfClasses(); ++i)
-					{
-						ClassDescriptor* pClassDesc = pPluginEntity->GetClassDescriptor(i);
+					// load the plug-in if it has never been loaded before. 
+					pPluginEntity = ParaEngine::CGlobals::GetPluginManager()->LoadDLL("", sFilename);
+				}
 
-						if (pClassDesc && pClassDesc->ClassID() == MovieCodec_CLASS_ID)
+				if (pPluginEntity != 0 && pPluginEntity->IsValid())
+				{
+					if (pPluginEntity->GetLibVersion() >= 3)
+					{
+						for (int i = 0; i < pPluginEntity->GetNumberOfClasses(); ++i)
 						{
-							m_pMovieCodec = (IMovieCodec*)pClassDesc->Create();
+							ClassDescriptor* pClassDesc = pPluginEntity->GetClassDescriptor(i);
+
+							if (pClassDesc && pClassDesc->ClassID() == MovieCodec_CLASS_ID)
+							{
+								m_pMovieCodec = (IMovieCodec*)pClassDesc->Create();
+							}
 						}
 					}
-				}
-				else
-				{
-					OUTPUT_LOG("movie codec require at least version 3 but you only have version %d\n", pPluginEntity->GetLibVersion());
-					CGlobals::GetApp()->SystemMessageBox("MovieCodec plugin needs at least version 3. Please update from official website!");
+					else
+					{
+						OUTPUT_LOG("movie codec require at least version 3 but you only have version %d\n", pPluginEntity->GetLibVersion());
+						CGlobals::GetApp()->SystemMessageBox("MovieCodec plugin needs at least version 3. Please update from official website!");
+					}
 				}
 			}
 		}
@@ -152,6 +163,10 @@ void CMoviePlatform::SetStereoCaptureMode( MOVIE_CAPTURE_MODE nMode )
 	if (nMode == MOVIE_CAPTURE_MODE_STEREO_LEFT_RIGHT)
 	{
 		CGlobals::GetViewportManager()->SetLayout(VIEW_LAYOUT_STEREO_LEFT_RIGHT);
+	}
+	else if (nMode == MOVIE_CAPTURE_MODE_STEREO_RED_BLUE)
+	{
+		CGlobals::GetViewportManager()->SetLayout(VIEW_LAYOUT_STEREO_RED_BLUE);
 	}
 	else
 	{
@@ -292,13 +307,11 @@ bool CMoviePlatform::TakeScreenShot(const string& filename, int width, int heigh
 	else
 		return false;
 }
-
 bool CMoviePlatform::TakeScreenShot(const string& filename)
 {
 #ifdef USE_DIRECTX_RENDERER
 #define SCREENSHOT_FROM_BACKBUFFER
 #ifdef SCREENSHOT_FROM_BACKBUFFER
-
 	LPDIRECT3DSURFACE9  pBackBuffer = CGlobals::GetDirectXEngine().GetRenderTarget();
 	if(pBackBuffer)
 	{
@@ -355,10 +368,237 @@ bool CMoviePlatform::TakeScreenShot(const string& filename)
 	else
 		GSSHOTSYSTEM->TakeScreenShot(filename.c_str());
 #endif
+#elif defined(PARAENGINE_MOBILE)
+	string Filename = filename;
+
+	if (filename.empty())
+	{
+		char ValidFilename[256];
+		ZeroMemory(ValidFilename, sizeof(ValidFilename));
+
+		std::string date_str = ParaEngine::GetDateFormat("MMM dd yy");
+		snprintf(ValidFilename, 255, "Screen Shots\\ParaEngine_%s_%s.jpg", date_str.c_str(), ParaEngine::GetTimeFormat("hh'H'mm'M'ss tt").c_str());
+		Filename = ValidFilename;
+	}
+	Filename = CParaFile::GetWritablePath() + Filename;
+	if (CParaFile::CreateDirectory(Filename.c_str()))
+	{
+		int width=cocos2d::Director::getInstance()->getOpenGLView()->getFrameSize().width;
+		int height = cocos2d::Director::getInstance()->getOpenGLView()->getFrameSize().height;
+		std::vector<unsigned int> pixels;
+		pixels.resize(width*height);
+		glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, &pixels[0]);
+		CHECK_GL_ERROR_DEBUG();
+		std::vector<unsigned int> img_pixels;
+		img_pixels.resize(pixels.size());
+		for (int row = 0; row < height; ++row)
+		{
+			memcpy(&img_pixels[width*row], &pixels[width*(height - row - 1)], width*sizeof(unsigned int));
+		}
+		cocos2d::CCImage img;
+		img.initWithRawData(reinterpret_cast<const unsigned char*>(&img_pixels[0]), img_pixels.size()*sizeof(unsigned int), width, height, 32);
+		img.saveToFile(Filename);
+		return true;
+	}
 #endif
 	return false;
 }
+void CMoviePlatform::TakeScreenShot_Async(const string& filename, bool bEncode, int width, int height, screenshot_callback callback)
+{
+#ifdef USE_DIRECTX_RENDERER
+	std::thread thread([=]() {
+		std::vector<BYTE> buffers;
+		bool result = TakeScreenShot_FromGDI(filename, buffers, bEncode, width, height);
+		if (callback != nullptr)
+		{
+			callback(result,buffers);
+		}
+	});
+	thread.detach();
+#endif
+}
+bool CMoviePlatform::TakeScreenShot_FromGDI(const string& filename, std::vector<BYTE>& outBase64Buffers, bool bEncode, int width, int height)
+{
+#if defined(USE_DIRECTX_RENDERER) && defined(USE_FREEIMAGE)
+	// force same resolution as current back buffer.  
+	LPDIRECT3DSURFACE9 pFromSurface = CGlobals::GetDirectXEngine().GetRenderTarget(0);
+	D3DSURFACE_DESC desc;
+	if (!pFromSurface)
+	{
+		return false;
+	}
+	int wndWidth = 0;
+	int wndHeight = 0;
+	if (SUCCEEDED(pFromSurface->GetDesc(&desc)))
+	{
+		wndWidth = desc.Width;
+		wndHeight = desc.Height;
+	}
+	if (width <= 0 || height <= 0)
+	{
+		width = wndWidth;
+		height = wndHeight;
+	}
+	string Filename = filename;
 
+	if (filename.empty())
+	{
+		char ValidFilename[256];
+		ZeroMemory(ValidFilename, sizeof(ValidFilename));
+
+		std::string date_str = ParaEngine::GetDateFormat("MMM dd yy");
+		snprintf(ValidFilename, 255, "Screen Shots\\ParaEngine_%s_%s.jpg", date_str.c_str(), ParaEngine::GetTimeFormat("hh'H'mm'M'ss tt").c_str());
+		Filename = ValidFilename;
+	}
+
+	string sExt = CParaFile::GetFileExtension(Filename);
+
+	FREE_IMAGE_FORMAT FileFormat = FIF_PNG;
+
+	if (sExt == "dds")
+	{
+		FileFormat = FIF_DDS;
+	}
+	else if (sExt == "jpg")
+	{
+		FileFormat = FIF_JPEG;
+	}
+	else if (sExt == "bmp")
+	{
+		FileFormat = FIF_BMP;
+	}
+	else if (sExt == "tga")
+	{
+		FileFormat = FIF_TARGA;
+	}
+	else // if(sExt == "png")
+	{
+		FileFormat = FIF_PNG;
+	}
+	std::vector<BYTE> buffers;
+	int fileSize = 0;
+	int infoSize = 0;
+
+	if (CaptureBitmapBuffer(CGlobals::GetAppHWND(), fileSize, infoSize, buffers, false, 0, 0, wndWidth, wndHeight) != 0)
+	{
+		return false;
+	}
+
+	FIMEMORY* sourceMemBuff = FreeImage_OpenMemory(&(buffers[0]), buffers.size());;
+	FIBITMAP* sourceImage = FreeImage_LoadFromMemory(FIF_BMP, sourceMemBuff);
+	if (width != wndWidth || height != wndHeight)
+	{
+		sourceImage = FreeImage_Rescale(sourceImage, width, height, FILTER_BOX);
+	}
+	FIMEMORY* destMemBuff = FreeImage_OpenMemory();
+	FreeImage_SaveToMemory(FileFormat, sourceImage, destMemBuff);
+
+	BYTE *mem_buffer = NULL;
+	DWORD size_in_bytes = 0;
+	FreeImage_AcquireMemory(destMemBuff, &mem_buffer, &size_in_bytes);
+
+	if (bEncode)
+	{
+		int nBufferSize = CyoEncode::Base64EncodeGetLength(size_in_bytes);
+		outBase64Buffers.resize(nBufferSize);
+		CyoEncode::Base64Encode(&(outBase64Buffers[0]), mem_buffer, size_in_bytes);
+	}
+
+	CParaFile file;
+	if (file.CreateNewFile(filename.c_str()))
+	{
+		file.write(mem_buffer, size_in_bytes);
+		file.close();
+		FreeImage_CloseMemory(sourceMemBuff);
+		FreeImage_CloseMemory(destMemBuff);
+		return true;
+	}
+#endif
+	return false;
+}
+int CMoviePlatform::CaptureBitmapBuffer(HWND nHwnd, int& outFileHeaderSize, int& outInfoHeaderSize, std::vector<BYTE>& outBuffers, bool bCaptureMouse, int nLeft /*= 0*/, int nTop /*= 0*/, int width /*= 0*/, int height /*= 0*/)
+{
+#ifdef USE_DIRECTX_RENDERER
+	//--Get the interface device context
+	HDC SourceHDC = GetDC(nHwnd);
+	//--Create a compatible device context from the interface context
+	HDC compatibleHDC = CreateCompatibleDC(SourceHDC);
+
+	BITMAP Bitmap;
+
+	// Create a compatible bitmap
+	HBITMAP bitmapHandle = CreateCompatibleBitmap(SourceHDC, width, height);
+	if (bitmapHandle == 0 || !SelectObject(compatibleHDC, bitmapHandle))
+	{
+		OUTPUT_LOG("error: can not select bitmap in MovieCodec::TakeScreenshot()\n");
+		return -1;
+	}
+	// copy the bitmap to the memory device context
+	// SRCCOPY | CAPTUREBLT: Includes any windows that are layered on top of your window in the resulting image. By default, the image only contains your window.
+	if (!BitBlt(compatibleHDC, 0, 0, width, height, SourceHDC, nLeft, nTop, SRCCOPY))
+	{
+		OUTPUT_LOG("error: bitblt failed with code %d in MovieCodec::TakeScreenshot()\n", GetLastError());
+		return -1;
+	}
+
+	// copy the mouse cursor to the bitmap
+	if (bCaptureMouse) {
+		HCURSOR hc = ::GetCursor();
+		CURSORINFO cursorinfo;
+		ICONINFO iconinfo;
+		cursorinfo.cbSize = sizeof(CURSORINFO);
+		::GetCursorInfo(&cursorinfo);
+		::GetIconInfo(cursorinfo.hCursor, &iconinfo);
+		::ScreenToClient(nHwnd, &cursorinfo.ptScreenPos);
+		::DrawIcon(m_CompatibleHDC, cursorinfo.ptScreenPos.x - iconinfo.xHotspot, cursorinfo.ptScreenPos.y - iconinfo.yHotspot, cursorinfo.hCursor);
+	}
+
+	//--Get the bitmap
+	GetObject(bitmapHandle, sizeof(BITMAP), &Bitmap);
+
+	outFileHeaderSize = sizeof(BITMAPFILEHEADER);
+	outInfoHeaderSize = sizeof(BITMAPINFOHEADER);
+	//--Compute the bitmap size
+	unsigned long BitmapSize = outFileHeaderSize + outInfoHeaderSize + (Bitmap.bmWidth  * Bitmap.bmHeight * 3);
+
+	//--Allocate a memory block for the bitmap
+	//allocate the output buffer;
+	outBuffers.resize(BitmapSize);
+	memset(&(outBuffers[0]), 0, BitmapSize);
+
+	BYTE* MemoryHandle = &(outBuffers[0]);
+
+	LPBITMAPFILEHEADER fileHeader = (LPBITMAPFILEHEADER)(MemoryHandle);
+	fileHeader->bfType = 0x4d42;
+	fileHeader->bfSize = 0;
+	fileHeader->bfReserved1 = 0;
+	fileHeader->bfReserved2 = 0;
+	fileHeader->bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+
+	//--Setup the bitmap data
+	LPBITMAPINFOHEADER pBmpInfo = (LPBITMAPINFOHEADER)(&(outBuffers[outFileHeaderSize]));
+	pBmpInfo->biSizeImage = 0;//BitmapSize - sizeof(BITMAPINFOHEADER);
+	pBmpInfo->biSize = sizeof(BITMAPINFOHEADER);
+	pBmpInfo->biHeight = Bitmap.bmHeight;
+	pBmpInfo->biWidth = Bitmap.bmWidth;
+	pBmpInfo->biCompression = BI_RGB;
+	pBmpInfo->biBitCount = 24;
+	pBmpInfo->biPlanes = 1;
+	pBmpInfo->biXPelsPerMeter = 0;
+	pBmpInfo->biYPelsPerMeter = 0;
+	pBmpInfo->biClrUsed = 0;
+	pBmpInfo->biClrImportant = 0;
+
+	//--Get the bitmap data from memory
+	GetDIBits(compatibleHDC, bitmapHandle, 0, Bitmap.bmHeight, (unsigned char*)(&(outBuffers[outFileHeaderSize + outInfoHeaderSize])), (LPBITMAPINFO)pBmpInfo, DIB_RGB_COLORS);
+
+	::DeleteObject(bitmapHandle);
+	::DeleteDC(compatibleHDC);
+	::ReleaseDC(nHwnd, SourceHDC);
+	::ReleaseDC(nHwnd, compatibleHDC);
+#endif
+	return 0;
+}
 HRESULT CMoviePlatform::InvalidateDeviceObjects()
 {
 	IMovieCodec* pMovieCodec = GetMovieCodec(false);
@@ -749,7 +989,7 @@ bool CMoviePlatform::BeginCapture(const string& sFileName)
 	if (GetStereoCaptureMode() == MOVIE_CAPTURE_MODE_STEREO_LEFT_RIGHT || GetStereoCaptureMode() == MOVIE_CAPTURE_MODE_STEREO_ABOVE_BELOW || GetStereoCaptureMode() == MOVIE_CAPTURE_MODE_STEREO_LINE_INTERLACED)
 	{
 		// double the FPS for special stereo mode, since we will render one frame for the left eye and one frame for the right eye, and the output video is half the actual FPS. 
-		nRefreshFPS *= 2;
+		// nRefreshFPS *= 2;
 	}
 	CGlobals::GetApp()->SetRefreshTimer(1.f/nRefreshFPS);
 	if (!pMovieCodec)
@@ -1042,3 +1282,4 @@ int CMoviePlatform::InstallFields(CAttributeClass* pClass, bool bOverride)
 
 	return S_OK;
 }
+

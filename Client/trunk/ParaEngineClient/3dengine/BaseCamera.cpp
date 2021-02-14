@@ -51,12 +51,6 @@ CBaseCamera::CBaseCamera()
 	DVector3 vEyePt(0.0f,0.0f,0.0f);
 	DVector3 vLookatPt(0.0f,0.0f,1.0f);
 
-	// Setup the view matrix
-	SetViewParams( vEyePt, vLookatPt );
-
-	// Setup the projection matrix
-	SetProjParams( MATH_PI/4, 1.0f, 1.0f, 1000.0f );
-
 #ifdef WIN32
 	GetCursorPos( &m_ptLastMousePosition );
 #endif
@@ -94,6 +88,13 @@ CBaseCamera::CBaseCamera()
 	m_fOrthoHeight = 100.f;
 	m_fOrthoWidth = 100.f;
 	m_bIsPerspectiveView = true;
+
+
+	// Setup the view matrix
+	SetViewParams(vEyePt, vLookatPt);
+
+	// Setup the projection matrix
+	SetProjParams(MATH_PI / 4, 1.0f, 1.0f, 1000.0f);
 }
 
 void ParaEngine::CBaseCamera::CopyCameraParamsFrom(CBaseCamera* pFromCamera)
@@ -233,7 +234,7 @@ void CBaseCamera::SetFarPlane(float fFarPlane)
 //-----------------------------------------------------------------------------
 LRESULT CBaseCamera::HandleMessages( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
-#ifdef USE_DIRECTX_RENDERER
+#if defined( USE_DIRECTX_RENDERER)
 	UNREFERENCED_PARAMETER( hWnd );
 	UNREFERENCED_PARAMETER( lParam );
 
@@ -699,21 +700,21 @@ Vector3 ParaEngine::CBaseCamera::GetRenderEyePosition()
 /// [in] nWidth, nHeight: Device Screen size
 /// [in] world transform matrix
 //-----------------------------------------------------------------------------
-void CBaseCamera::GetMouseRay(Vector3& vPickRayOrig, Vector3& vPickRayDir, POINT ptCursor, UINT nWidth, UINT nHeight, Matrix4* pMatWorld)
+void CBaseCamera::GetMouseRay(Vector3& vPickRayOrig, Vector3& vPickRayDir, POINT ptCursor, UINT nWidth, UINT nHeight, const Matrix4* pMatWorld)
 {
 	Matrix4* pMatProj = GetProjMatrix();
 
 	// Compute the vector of the pick ray in screen space
 	Vector3 v;
-	v.x =  ( ( ( 2.0f * ptCursor.x ) / nWidth  ) - 1 ) / pMatProj->_11;
-	v.y = -( ( ( 2.0f * ptCursor.y ) / nHeight ) - 1 ) / pMatProj->_22;
+	v.x =  ( ( ( 2.0f * ptCursor.x ) / nWidth  ) - 1.0f ) / pMatProj->_11;
+	v.y = -( ( ( 2.0f * ptCursor.y ) / nHeight ) - 1.0f ) / pMatProj->_22;
 	v.z =  1.0f;
 
 	// Get the inverse of the composite view and world matrix
 	Matrix4*	pMatView = GetViewMatrix();
 	Matrix4	m;
 	m = (*pMatWorld)*(*pMatView);
-	m = m.inverse();
+	m.invert();
 
 	// Transform the screen space pick ray into 3D space
 	vPickRayDir.x  = v.x*m._11 + v.y*m._21 + v.z*m._31;

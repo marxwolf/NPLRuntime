@@ -22,7 +22,9 @@ include_directories("${lua_SOURCE_DIR}/src/")
 include_directories("${Boost_INCLUDE_DIRS}")
 
 IF(WIN32)
+if(NOT NPLRUNTIME_STATIC_LIB)
 	add_definitions(-DLUA_BUILD_AS_DLL)
+endif()
 ENDIF(WIN32)
 
 IF(MSVC)
@@ -40,5 +42,5 @@ ELSE()
 	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -Wno-deprecated-declarations")
 ENDIF()
 
-ADD_LIBRARY(luabind ${luabind_SRCS})
+ADD_LIBRARY(luabind STATIC ${luabind_SRCS})
 

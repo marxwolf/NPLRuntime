@@ -11,6 +11,7 @@
 #include "PaintDevice.h"
 #include "PainterState.h"
 #include "ParaScriptBindings/ParaScriptingPainter.h"
+#include "BipedObject.h"
 #include "Painter.h"
 
 using namespace ParaEngine;
@@ -269,6 +270,20 @@ void ParaEngine::CPainter::Flush()
 {
 	if (engine)
 		engine->Flush();
+}
+
+void ParaEngine::CPainter::DrawSceneObject(CBaseObject * pObj, int nOption)
+{
+	if (pObj)
+	{
+		static std::vector<Vector3> output;
+		output.clear();
+		int nTriangleCount = pObj->GetMeshTriangleList(output, nOption);
+		if (nTriangleCount > 0)
+		{
+			drawTriangles(&(output[0]), nTriangleCount);
+		}
+	}
 }
 
 void ParaEngine::CPainter::SetSpriteTransform(const Matrix4 * pMatrix /*= NULL*/)
@@ -886,7 +901,6 @@ void ParaEngine::CPainter::drawPoints(const QPoint *points, int pointCount)
 }
 
 
-
 void ParaEngine::CPainter::drawTriangles(const Vector3* vertices, int nTriangleCount)
 {
 	engine->drawTriangles(vertices, nTriangleCount);
@@ -1011,7 +1025,7 @@ void ParaEngine::CPainter::drawText(const QPointF &p, const std::string &text)
 {
 	if (!engine || !state)
 		return;
-	RECT rect = { (int)p.x(), (int)p.y(), (int)p.x() + 1000, (int)p.y() + 100 };
+	RECT rect = { (int)p.x(), (int)p.y(), std::max((int)p.x(), 0) + 5000, (int)p.y() + 100 };
 	Color color = state->color();
 
 	engine->drawText(state->m_font.GetSpriteFont(), text.c_str(), text.size(), &rect, QTextOption(), color);
@@ -1559,7 +1573,7 @@ int ParaEngine::CPainter::InstallFields(CAttributeClass* pClass, bool bOverride)
 	pClass->AddField("CurrentMatrix", FieldType_Matrix4, (void*)0, (void*)GetCurrentMatrix_s, NULL, "", bOverride);
 	pClass->AddField("Scaling", FieldType_Vector3, (void*)0, (void*)GetScaling_s, NULL, "", bOverride);
 	pClass->AddField("AutoLineWidth", FieldType_Bool, (void*)EnableAutoLineWidth_s, (void*)IsAutoLineWidth_s, NULL, "", bOverride);
-
+	pClass->AddField("UseWorldMatrix", FieldType_Bool, (void*)SetSpriteUseWorldMatrix_s, (void*)IsSpriteUseWorldMatrix_s, NULL, "", bOverride);
 	return S_OK;
 }
 

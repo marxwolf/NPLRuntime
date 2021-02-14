@@ -21,6 +21,7 @@ namespace ParaEngine
 	struct  AssetEntity;
 	typedef std::vector<MSG> GUIMsgEventList_type;
 	struct TouchEvent;
+	struct MouseEvent;
 	struct AccelerometerEvent;
 	class TouchEventSession;
 
@@ -82,10 +83,21 @@ namespace ParaEngine
 		ATTRIBUTE_METHOD1(CGUIRoot, GetFingerStepSizePixels_s, int*)	{ *p1 = cls->GetFingerStepSizePixels(); return S_OK; }
 		ATTRIBUTE_METHOD1(CGUIRoot, SetFingerStepSizePixels_s, int)	{ cls->SetFingerStepSizePixels(p1); return S_OK; }
 
+		ATTRIBUTE_METHOD1(CGUIRoot, SendKeyDownEvent_s, int) { cls->SendKeyDownEvent(p1); return S_OK; }
+		ATTRIBUTE_METHOD1(CGUIRoot, SendKeyUpEvent_s, int) { cls->SendKeyUpEvent(p1); return S_OK; }
+
+		ATTRIBUTE_METHOD1(CGUIRoot, IsMouseButtonSwapped_s, bool*) { *p1 = cls->IsMouseButtonSwapped(); return S_OK; }
+		ATTRIBUTE_METHOD1(CGUIRoot, SetMouseButtonSwapped_s, bool) { cls->SetMouseButtonSwapped(p1); return S_OK; }
+
+		ATTRIBUTE_METHOD1(CGUIRoot, SendInputMethodEvent_s, const char*) { cls->SendInputMethodEvent(p1); return S_OK; }
+
 		ATTRIBUTE_METHOD1(CGUIRoot, SetMinimumScreenSize_s, Vector2)		{ cls->SetMinimumScreenSize((int)(p1.x), (int)(p1.y)); return S_OK; }
 		
 		ATTRIBUTE_METHOD1(CGUIRoot, IsMouseCaptured_s, bool*)	{ *p1 = cls->IsMouseCaptured(); return S_OK; }
 		ATTRIBUTE_METHOD1(CGUIRoot, SetCaptureMouse_s, bool)	{ cls->SetCaptureMouse(p1); return S_OK; }
+
+		ATTRIBUTE_METHOD1(CGUIRoot, IsNonClient_s, bool*)	{ *p1 = cls->IsNonClient(); return S_OK; }
+		ATTRIBUTE_METHOD1(CGUIRoot, SetIsNonClient_s, bool)	{ cls->SetIsNonClient(p1); return S_OK; }
 	public:
 		ParaEngine::GUIState& GetGUIState() { return m_stateGUI; }
 		CDirectMouse* GetMouse() { return m_pMouse; }
@@ -96,6 +108,7 @@ namespace ParaEngine
 		
 		bool PushEvent(const MSG& msg);
 		bool handleTouchEvent(const TouchEvent& touch);
+		bool handleNonClientTest(const MouseEvent& mouseEvent);
 		bool handleAccelerometerEvent(const AccelerometerEvent& accelerator);
 		bool handleGesturePinch(CTouchGesturePinch& pinch_gesture);
 		void TranslateMousePointInTouchEvent(TouchEvent &touch);
@@ -261,6 +274,18 @@ namespace ParaEngine
 		*/
 		int	HandleUserInput();
 
+		/**
+		* send a simulated raw key event to ParaEngine.
+		* @param nVirtualkey: should be of type EVirtualkey
+		*/
+		void SendKeyDownEvent(int nVirtualkey);
+		void SendKeyUpEvent(int nVirtualkey);
+		void SendInputMethodEvent(const char* pStr);
+
+		/** swap left/right mouse button and touch.*/
+		bool IsMouseButtonSwapped();
+		void SetMouseButtonSwapped(bool bSwapped);
+
 		bool DispatchKeyboardMsg(bool bKeyHandled);
 
 		void DispatchTouchMouseEvent(bool &bMouseHandled);
@@ -271,6 +296,11 @@ namespace ParaEngine
 		* Resets all objects.
 		*/
 		virtual void Reset();
+
+		/**
+		* Clear all the control's children
+		*/
+		virtual void DestroyChildren();
 
 		/**
 		* Delete all contains of the root object
@@ -317,6 +347,13 @@ namespace ParaEngine
 
 		bool IsKeyboardProcessed();
 		bool IsMouseProcessed();
+
+		/** whether the mouse is in non-client area, we will allow the user to drag the window if this is true.
+		* CGUIContainer:SetNonClientArea(true) can be used to specify a non-client area.
+		*/
+		bool IsNonClient() const;
+		void SetIsNonClient(bool val);
+
 		/**
 		* get the current mouse cursor position
 		* @param nX : in pixels
@@ -495,6 +532,10 @@ namespace ParaEngine
 
 		/** whether there is a visible IME virtual CGUIIMEEditBox that has key focus. */
 		bool m_bHasIMEFocus;
+		/** whether the mouse is in non-client area, we will allow the user to drag the window if this is true. 
+		* CGUIContainer:SetNonClientArea(true) can be used to specify a non-client area. 
+		*/
+		bool m_bIsNonClient;
 		/** touch finger size in pixels. we will automatically click a button when it is within finger size. */
 		int m_nFingerSizePixels;
 		int m_nFingerStepSizePixels;

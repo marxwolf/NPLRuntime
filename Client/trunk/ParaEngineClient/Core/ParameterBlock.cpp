@@ -13,6 +13,7 @@
 #include "ParaWorldAsset.h"
 #include "effect_file.h"
 #include "EffectManager.h"
+#include "ViewportManager.h"
 #include "SceneObject.h"
 #include "AutoCamera.h"
 #include "BlockEngine/BlockWorldClient.h"
@@ -401,6 +402,13 @@ void CParameterBlock::SetParamByStringValue(const char* sParamName, const char* 
 			v.y = vColor.g;
 			v.z = vColor.b;
 		}
+		else if (sValue == "vec3SunAmbient")
+		{
+			LinearColor vColor = CGlobals::GetScene()->GetSunLight().GetSunAmbient();
+			v.x = vColor.r;
+			v.y = vColor.g;
+			v.z = vColor.b;
+		}
 		else if (sValue == "vec3BlockLightColor")
 		{
 			LinearColor vColor = BlockWorldClient::GetInstance()->GetBlockLightColor();
@@ -432,7 +440,14 @@ void CParameterBlock::SetParamByStringValue(const char* sParamName, const char* 
 			v.x = (float)(CGlobals::GetEffectManager()->GetShadowMap()->GetShadowMapTexelSize());
 			v.y = (float)(1 / v.x);
 		}
-
+		else if (sValue == "vec2ViewportScale")
+		{
+			CGlobals::GetViewportManager()->GetActiveViewPort()->GetViewportTransform(&v, NULL);
+		}
+		else if (sValue == "vec2ViewportOffset")
+		{
+			CGlobals::GetViewportManager()->GetActiveViewPort()->GetViewportTransform(NULL, &v);
+		}
 		SetParameter(sParamName, v);
 	}
 	else if (sValue.find("float") != string::npos)
@@ -468,9 +483,46 @@ void CParameterBlock::SetParamByStringValue(const char* sParamName, const char* 
 		{
 			v = CGlobals::GetScene()->GetSunLight().GetTimeOfDaySTD();
 		}
+		else if (sValue == "floatShadowRadius")
+		{
+			v = CGlobals::GetScene()->GetShadowRadius();
+		}
 
 		SetParameter(sParamName, v);
 	}
 #endif
+}
+
+CApplyObjectLevelParamBlock::CApplyObjectLevelParamBlock(CParameterBlock* pBlock) :m_pBlock(pBlock)
+{
+	if (m_pBlock)
+	{
+		CParameter* pParam = NULL;
+		pParam = m_pBlock->GetParameter("ztest");
+		if (pParam)
+		{
+			bool bZTest = (bool)(*pParam);
+			m_bLastZEnabled = CGlobals::GetEffectManager()->IsZTestEnabled();
+			CGlobals::GetEffectManager()->EnableZTest(bZTest);
+		}
+	}
+}
+
+CApplyObjectLevelParamBlock::~CApplyObjectLevelParamBlock()
+{
+	if (m_pBlock)
+	{
+		CParameter* pParam = NULL;
+		pParam = m_pBlock->GetParameter("ztest");
+		if (pParam)
+		{
+			CGlobals::GetEffectManager()->EnableZTest(m_bLastZEnabled);
+		}
+	}
+}
+
+ParaEngine::CParameterBlock* CApplyObjectLevelParamBlock::GetParamsBlock()
+{
+	return m_pBlock;
 }
 

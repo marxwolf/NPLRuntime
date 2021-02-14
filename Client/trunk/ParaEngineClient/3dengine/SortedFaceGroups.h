@@ -48,7 +48,7 @@ namespace ParaEngine
 		vector <uint32> m_vertexWeights;
 		vector <uint32> m_boneIndices;
 
-		float m_stripLenght;
+		float m_stripLength;
 	public:
 		/** update the center position based on the vertices in the groups. */
 		void UpdateCenterPos();
@@ -74,6 +74,10 @@ namespace ParaEngine
 		/** in case there is an UV animation applied to this face group. such as transparent texture based water pools, etc. 
 		* in most cases, this is (0,0).*/
 		Vector2 m_vUVOffset;
+		/* in most cases, this is (0,0,0) */
+		Vector3 m_vUVRotate;
+		/* in most cases, this is (1.0f, 1.0f) */
+		Vector2 m_vUVScale;
 
 		/** pointer to the data of the face group. */
 		CFaceGroup* m_facegroup;

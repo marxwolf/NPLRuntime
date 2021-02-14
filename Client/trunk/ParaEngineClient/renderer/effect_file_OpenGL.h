@@ -1,17 +1,18 @@
 #pragma once
 #include "effect_file.h"
 #include "ParameterBlock.h"
-
+#include "gleffects.h"
 #include <unordered_map>
 
-namespace cocos2d
-{
+namespace GLWrapper{
 	class GLProgram;
 	struct Uniform;
 }
 
 namespace ParaEngine
 {
+	
+
 	class CEffectFileOpenGL : public CEffectFileBase
 	{
 	public:
@@ -86,7 +87,7 @@ namespace ParaEngine
 		/** 
 		* @param nPass: -1 to release all 
 		*/
-		void releaseEffect(int nPass = -1);
+		void releaseEffect(int nTech = -1, int nPass = -1);
 
 		/** set inner file name, usually at the load time. */
 		void SetFileName(const std::string& filename);
@@ -146,22 +147,22 @@ namespace ParaEngine
 		const TechniqueDesc* GetCurrentTechniqueDesc();
 
 	public:
-		bool setParameter(cocos2d::Uniform* uniform, const void* data, int32 size = D3DX_DEFAULT);
+		bool setParameter(GLWrapper::Uniform* uniform, const void* data, int32 size = D3DX_DEFAULT);
 
-		cocos2d::GLProgram* GetGLProgram(int nPass = 0, bool bCreateIfNotExist = false);
+		GLWrapper::GLProgram* GetGLProgram(int nTech, int nPass, bool bCreateIfNotExist = false);
 		
 		/** Initializes the GLProgram with a vertex and fragment with bytes array
 		*/
-		bool initWithByteArrays(const char* vShaderByteArray, const char* fShaderByteArray, int nPass = 0);
+		bool initWithByteArrays(const char* vShaderByteArray, const char* fShaderByteArray, int nTech = 0, int nPass = 0);
 
 		/** Initializes the GLProgram with a vertex and fragment with contents of filenames
 		*/
-		bool initWithFilenames(const std::string& vShaderFilename, const std::string& fShaderFilename, int nPass = 0);
+		bool initWithFilenames(const std::string& vShaderFilename, const std::string& fShaderFilename, int nTech = 0, int nPass = 0);
 
 		/** links the glProgram */
-		bool link(int nPass = 0);
+		bool link(int nTech = 0, int nPass = 0);
 		/** it will call glUseProgram() */
-		bool use(int nPass = 0);
+		bool use(int nTech = -1, int nPass = -1);
 		/** It will create 4 uniforms:
 		- kUniformPMatrix
 		- kUniformMVMatrix
@@ -171,10 +172,10 @@ namespace ParaEngine
 		And it will bind "GLProgram::UNIFORM_SAMPLER" to 0
 		@param nPass: if -1, it will update active pass, otherwise it will be current active pass. 
 		*/
-		void updateUniforms(int nPass = -1);
+		void updateUniforms(int nTech = -1, int nPass = -1);
 		
-		cocos2d::Uniform* GetUniformByID(eParameterHandles id);
-		cocos2d::Uniform* GetUniform(const std::string& sName);
+		GLWrapper::Uniform* GetUniformByID(eParameterHandles id);
+		GLWrapper::Uniform* GetUniform(const std::string& sName);
 		
 		/** add changes to shader parameters, those changes are commited to device when CommitChange() is called. */
 		template <typename ValueType>
@@ -195,10 +196,22 @@ namespace ParaEngine
 			m_pendingChanges[m_pendingChangesCount - 1] = value;
 		}
 
+		void SetShadowMapSize(int nsize);
+
 	protected:
-		std::vector<cocos2d::GLProgram*> m_programs;
-		static std::unordered_map<uint32, std::string> s_id_to_names;
-		static std::unordered_map<uint32, std::string> LoadStaticIdNameMap();
+		bool MappingEffectUniforms();
+		bool GeneratePasses();
+
+	protected:
+		std::unordered_map<uint32, std::string> m_ID2Names;
+		GLEffectsTree* m_Effect;
+
+		struct TechniqueDescGL : public TechniqueDesc
+		{
+			std::vector<GLWrapper::GLProgram*> mPasses;
+		};
+		std::vector<TechniqueDescGL> mTechniques;
+		int mTechniqueIndex;
 		/** current active pass */
 		int m_nActivePassIndex;
 		bool m_bIsBegin;

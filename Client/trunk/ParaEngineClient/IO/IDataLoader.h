@@ -18,10 +18,13 @@ namespace ParaEngine
 
 		/** get the file name */
 		virtual const char* GetFileName() {return 0;};
+
+		/** get the key name */
+		virtual const char* GetKeyName() {return 0;};
 		
 		/** Decompress is called by one of the processing threads to decompress the data.*/
 		virtual HRESULT Decompress( void** ppData, int* pcBytes ) = 0;
-		/** Destroy is called by the graphics thread when it has consumed the data. */
+		/** Destroy is called by the graphics thread when it has consumed the data, unless IsDeviceObject() is false. */
 		virtual HRESULT Destroy() = 0;
 		/** Load is called from the IO thread to load data. */
 		virtual HRESULT Load() = 0;
@@ -31,6 +34,9 @@ namespace ParaEngine
 
 		/** this function is solely used in statistics reporting. */
 		virtual int GetEstimatedSizeInBytes() {return 0;};
+
+		/** default to true. If not true, Destroy() will be called in the worker thread instead of render thread. */
+		virtual bool IsDeviceObject() { return true; };
 	};
 
 
@@ -72,11 +78,11 @@ namespace ParaEngine
 	public:
 		virtual ~IDataProcessor(){};
 
-		/** LockDeviceObject is called from the Graphics thread to lock the device object (D3D9).*/
+		/** LockDeviceObject is called from the Graphics thread to lock the device object (D3D9), unless IsDeviceObject() is false. */
 		virtual HRESULT LockDeviceObject() = 0;
-		/** UnLockDeviceObject is called from the Graphics thread to unlock the device object, or call updatesubresource for D3D10.*/
+		/** UnLockDeviceObject is called from the Graphics thread to unlock the device object, or call updatesubresource for D3D10, unless IsDeviceObject() is false. */
 		virtual HRESULT UnLockDeviceObject() = 0;
-		/** Destroy is called by the graphics thread when it has consumed the data. */
+		/** Destroy is called by the graphics thread when it has consumed the data, unless IsDeviceObject() is false.  */
 		virtual HRESULT	Destroy() = 0;
 		/** Process is called by one of the processing threads to process the data before it is consumed.*/
 		virtual HRESULT Process( void* pData, int cBytes ) = 0;
@@ -89,6 +95,9 @@ namespace ParaEngine
 		virtual void SetProcessorWorkerData(IProcessorWorkerData * pThreadLocalData ) {};
 		/** get thread local data. It may return NULL if the processor does not support thread local data. */
 		virtual IProcessorWorkerData * GetProcessorWorkerData() {return NULL;};
+
+		/** default to true. If not true, LockDeviceObject, UnLockDeviceObject are not called and Destroy will be called in the worker thread instead of render thread. */
+		virtual bool IsDeviceObject() { return true; };
 	};
 
 
@@ -150,5 +159,7 @@ namespace ParaEngine
 		CResourceRequestQueue();
 		CResourceRequestQueue(int capacity);
 		~CResourceRequestQueue();
+
+		BufferStatus try_push(ResourceRequest_ptr& item);
 	};
 }

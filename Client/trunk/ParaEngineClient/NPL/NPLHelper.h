@@ -20,6 +20,7 @@ namespace NPL
 
 	class NPLLex;
 	struct LexState;
+	struct STableStack;
 	
 	/** a collection of helper functions. */
 	class PE_CORE_DECL NPLHelper
@@ -27,7 +28,7 @@ namespace NPL
 	public:
 		NPLHelper(void);
 		~NPLHelper(void);
-
+		
 	public:
 		static void DevideString(const string& input,string& str1,string&str2,char separator=';');
 
@@ -63,7 +64,14 @@ namespace NPL
 		* @return true if successful. 
 		*/
 		template <typename StringType>
-		static bool SerializeToSCode(const char* sStorageVar, const luabind::object& input, StringType& sCode, int nCodeOffset=0);
+		static bool SerializeToSCode(const char* sStorageVar, const luabind::object& input, StringType& sCode, int nCodeOffset = 0, STableStack* pRecursionTable = NULL, bool sort = false);
+
+		template <typename StringType>
+		static bool SerializeToJson(const luabind::object& input, StringType& sCode, int nCodeOffset = 0, STableStack* pRecursionTable = NULL, bool bUseEmptyArray = false);
+
+		static bool isControlCharacter(char ch);
+
+		static bool containsControlCharacter(const char* str);
 
 		/** safe convert the lua object to string. if the input is nil, NULL is returned. please note that the returned const char* has the same lifetime as the input object */
 		static const char* LuaObjectToString(const luabind::object& input, int* pSize = NULL);
@@ -115,6 +123,9 @@ namespace NPL
 		*/
 		static NPLObjectProxy MsgStringToNPLTable(const char* input,int nLen=-1);
 
+		/** lua object to npl object. */
+		static bool LuaObjectToNPLObject(const luabind::object& input, NPLObjectProxy& out);
+
 		/** safe convert the lua object to string. if the input is nil, output is not assigned. 
 		* return true if input is a string object and value is written to output. 
 		* @param bUseMsg: if true, the table will be inside msg={...}, it default to false. 
@@ -149,11 +160,32 @@ namespace NPL
 		}
 		
 
+		template <typename StringType>
+		static void EncodeJsonStringInQuotation(StringType& output, int nOutputOffset, const char* input, int nInputSize);
+
+		template <typename StringType>
+		static void EncodeJsonStringInQuotation(StringType& output, int nOutputOffset, const std::string& input)
+		{
+			EncodeJsonStringInQuotation(output, nOutputOffset, input.c_str(), (int)input.size());
+		}
+		template <typename StringType>
+		static void EncodeJsonStringInQuotation(StringType& output, int nOutputOffset, const char* input)
+		{
+			EncodeJsonStringInQuotation(output, nOutputOffset, input, (int)strlen(input));
+		}
+
 		/** this function is thread-safe.
 		* Check if the given string can be encoded using lua long string, i.e.  [[]]
 		* json string usually can not be encoded in double brackets.
 		*/
 		static bool CanEncodeStringInDoubleBrackets(const char*	buffer, int nLength);
+	};
+
+	/** only used internally*/
+	struct STableStack
+	{
+		const luabind::object* m_pTableObj;
+		const STableStack* m_pParent;
 	};
 }
 

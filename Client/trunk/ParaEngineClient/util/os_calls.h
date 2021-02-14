@@ -22,7 +22,7 @@ namespace ParaEngine
 #define CLIB_DEFHANDLE	RTLD_DEFAULT
 #elif (PARA_TARGET_PLATFORM == PARA_PLATFORM_MAC) || (PARA_TARGET_PLATFORM == PARA_PLATFORM_IOS)
 #if defined(RTLD_MAIN_ONLY)
-// this is mostly for iOS?
+	// this is mostly for iOS?
 #define CLIB_DEFHANDLE	RTLD_MAIN_ONLY
 #else
 #define CLIB_DEFHANDLE	((void *)(intptr_t)-2)
@@ -67,6 +67,8 @@ namespace ParaEngine
 	/** get the id of the calling thread. */
 	PE_CORE_DECL int GetThisThreadID();
 
+	/** get the process id */
+	PE_CORE_DECL int GetProcessID();
 
 	/**
 	* Returns the peak (maximum so far) resident set size (physical
@@ -81,9 +83,18 @@ namespace ParaEngine
 	*/
 	PE_CORE_DECL size_t GetCurrentMemoryUse();
 
-	/** get current executable path. 
+	/** get current executable path.
 	*/
 	PE_CORE_DECL std::string GetExecutablePath();
+
+	/** whether stdin is tty */
+	PE_CORE_DECL bool stdin_is_tty();
+
+	/** read line from stdin in interactive mode. 
+	@param output: output string containing the actual line data without \n.
+	@param prompt: such as ">" or ">>"
+	*/
+	PE_CORE_DECL bool ReadLine(std::string& output, const char* prmt);
 }
 
 ///////////////////////////////////////////////////////
@@ -125,7 +136,7 @@ typedef struct _finddata_t
 typedef struct _findinfo_t
 {
 	DIR*	openedDir;
-	std::string filter;    
+	std::string filter;
 	std::string dirName;
 } _findinfo;
 

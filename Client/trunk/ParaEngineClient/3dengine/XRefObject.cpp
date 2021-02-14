@@ -11,13 +11,7 @@
 #include "ParaXAnimInstance.h"
 #include "CustomCharModelInstance.h"
 #include "SceneState.h"
-#ifdef USE_DIRECTX_RENDERER
-#include "StaticMesh.h"
-#elif defined(USE_OPENGL_RENDERER)
 #include "ParaXModel/ParaXStaticModel.h"
-#else
-#include "ParaXModel/ParaXStaticModel.h"
-#endif
 #include "MeshObject.h"
 #include "XRefObject.h"
 
@@ -67,7 +61,7 @@ Matrix4* ParaEngine::XRefObject::GetRenderMatrix( Matrix4& mxWorld , const Matri
 	// get the parent's rotation and scaling matrix, here it is some trick to reuse the parent node's code. we actually get its world matrix and then remove the translation part.
 	Matrix4 mat;
 	if(pMxParent==0)
-		m_pParent->GetRenderWorldMatrix(&mat, nRenderNumber);
+		m_pParent->GetRenderMatrix(mat, nRenderNumber);
 	else
 		mat = (*pMxParent);
 
@@ -95,7 +89,7 @@ Matrix4* ParaEngine::XRefObject::GetMatrix( Matrix4& mxWorld, const Matrix4* pMa
 	if(pMatParent)
 		mat = (*pMatParent);
 	else
-		mat = *(m_pParent->GetViewClippingObject())->GetWorldTransform();
+		m_pParent->GetViewClippingObject()->GetWorldTransform(mat);
 	mxWorld = m_mxLocalTransform;
 	mxWorld._41 += m_vOrigin.x;
 	mxWorld._42 += m_vOrigin.y;
@@ -437,7 +431,7 @@ HRESULT ParaEngine::XRefMeshObject::DrawInner( SceneState * sceneState, const Ma
 	}
 
 	int nIndex = ((MeshEntity*)m_pModelEntity.get())->GetLodIndex(fCameraToObjectDist);
-	CParaXStaticModelRawPtr pMesh = ((MeshEntity*)m_pModelEntity.get())->GetMesh(nIndex);
+	auto pMesh = ((MeshEntity*)m_pModelEntity.get())->GetMesh(nIndex);
 
 	if(pMesh == NULL)
 		return E_FAIL;
@@ -452,8 +446,7 @@ HRESULT ParaEngine::XRefMeshObject::DrawInner( SceneState * sceneState, const Ma
 	CGlobals::GetEffectManager()->applyObjectLocalLighting(m_pParent);
 
 	/// set whether to use the material(texture) in the mesh file
-	pMesh->m_bUseMaterials = true;
-
+	pMesh->UseMeshMaterials(true);
 	CEffectFile* pEffectFile = CGlobals::GetEffectManager()->GetCurrentEffectFile();
 	if ( pEffectFile == 0)
 	{

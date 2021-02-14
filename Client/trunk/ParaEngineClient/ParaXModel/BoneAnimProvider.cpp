@@ -17,6 +17,7 @@
 #include "ParaXModel.h"
 #include "DynamicAttributeField.h"
 #include "BoneAnimProvider.h"
+#include "util/StringHelper.h"
 
 #include "memdebug.h"
 /** auto gen anim ID*/
@@ -57,7 +58,9 @@ CBoneAnimProvider::CBoneAnimProvider(int nAnimID, const char* name, const char* 
 	
 	m_MergeMode = MergeMode_ReplaceExisting;
 
-	if(CParaFile::GetFileExtension(m_sFileName) == "x")
+	std::string  sExt = CParaFile::GetFileExtension(m_sFileName);
+	StringHelper::make_lower(sExt);
+	if (sExt == "x" || sExt == "fbx" || sExt == "xml")
 		LoadFromParaXFile(m_sFileName.c_str());
 	else
 		LoadFromBVHFile(m_sFileName.c_str());

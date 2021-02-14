@@ -1,14 +1,44 @@
 #pragma once
 #include "FileData.h"
+#include "FileHandle.h"
+#include <map>
 
 namespace ParaEngine
 {
 	class CSearchResult;
 
+	/** file information. */
+	struct CParaFileInfo
+	{
+		enum FileMode{
+			ModeNoneExist,
+			ModeFile,
+			ModeFileInZip,
+			ModeDirectory,
+			ModeLink,
+			ModeSocket,
+			ModeNamedPipe,
+			ModeCharDevice,
+			ModeBlockDevice,
+			ModeOther,
+		};
+	public:
+		CParaFileInfo();
+		
+		std::string m_sFullpath;
+		FileMode m_mode;
+		DWORD m_dwFileAttributes;
+		time_t m_ftCreationTime;
+		time_t m_ftLastAccessTime;
+		time_t m_ftLastWriteTime;
+		DWORD m_dwFileSize;
+	};
+
 	/** file platform related API and helper functions */
 	class CFileUtils
 	{
 	public:
+
 		/* remove the starting and trailing spaces ' ' from the string */
 		static void TrimString(std::string & str);
 
@@ -19,6 +49,11 @@ namespace ParaEngine
 
 		/** check if file exist, this function is cross platform. */
 		static bool FileExist(const char* filename);
+
+		/** check if file exist, this function is cross platform. 
+		* @param pDiskFile: output the actual file name. This is useful when development or search path is used. 
+		*/
+		static bool FileExist2(const char* filename, std::string * pDiskFile = NULL);
 
 		/** make a standard filename.
 		* @param output: the output string buffer. such as: char output[MAX_PATH]
@@ -70,9 +105,12 @@ namespace ParaEngine
 		/** delete a given file*/
 		static bool DeleteFile(const char* filename);
 
+		/** delete a given directory, regardless of whether it's empty or not*/
+		static int DeleteDirectory(const char* dirname);
+
 		/** delete a given file. It will reject any system files outside the application(or writable directory) directory.
 		* after all, this function is of high security level.
-		* @param sFilePattern: such as "*.dds", "temp/*.*", etc
+		* @param sFilePattern: such as "*.dds", "temp/ *.*", etc
 		* @param bSecureFolderOnly: if true, we only allow user to delete allowed folders.
 		* @return: the number of files deleted.
 		*/
@@ -89,11 +127,26 @@ namespace ParaEngine
 		*/
 		static FileData GetDataFromFile(const char* filename);
 
+		static std::string GetStringFromFile(const std::string& filename);
+
+		/** get file size of a disk file in bytes. */
+		static bool GetFileInfo(const char* filename, CParaFileInfo& fileInfo);
+
 		/** data need not be released, since it is from the resource file. 
-		* only supported in win32
+		* resources may be embedded with rc file under win32 and added using AddEmbeddedResource API.
 		* @return Note one must call FileData.ReleaseOwnership(). 
 		*/
 		static FileData GetResDataFromFile(const std::string& filename);
+
+		/** whether the resource file exist */
+		static bool DoesResFileExist(const std::string& filename);
+
+		/** add an embedded resource, the resource is usually from extern static const char* of the executable.
+		* Please note the data is never released. 
+		* we can obtain it by name with GetResDataFromFile
+		* @param name: should begin with ":" to designate it is a resource file
+		*/
+		static void AddEmbeddedResource(const char* name, const char* buffer, size_t nSize);
 
 		/** get fullPath for filename*/
 		static std::string GetFullPathForFilename(const std::string &filename);
@@ -127,6 +180,9 @@ namespace ParaEngine
 		*/
 		static bool SetFilePointer(FileHandle& fileHandle, int lDistanceToMove, int dwMoveMethod);
 
+		/** get the current file pointer position.*/
+		static int GetFilePosition(FileHandle& fileHandle);
+
 		/**
 		* The SetEndOfFile function moves the end-of-file (EOF) position for the specified file to
 		* the current position of the file pointer.This function can be used to truncate or extend a file.
@@ -134,11 +190,16 @@ namespace ParaEngine
 		* @return
 		*/
 		static bool SetEndOfFile(FileHandle& fileHandle);
-
+		
 		/** Write byte stream to file
 		* the file must be opened with write access.
 		*/
 		static int WriteBytes(FileHandle& fileHandle, const void* src, int bytes);
+
+		/** read byte stream from file
+		* the file must be opened with read access.
+		*/
+		static int ReadBytes(FileHandle& fileHandle, void* dest, int bytes);
 
 		/** close the given file*/
 		static void CloseFile(FileHandle& fileHandle);
@@ -150,8 +211,9 @@ namespace ParaEngine
 		*  Gets the writable path.
 		*  @return  The path that can be write/read a file in
 		*/
-		static std::string GetWritablePath();
+		static const std::string& GetWritablePath();
 
+		/** not thread safe, only set at startup when there is just one thread running. */
 		static void SetWritablePath(const std::string& writable_path);
 
 		/** this is a recursive function. @see SearchFiles */
@@ -159,6 +221,30 @@ namespace ParaEngine
 	public:
 		// this is usually /mnt/sdcard/XXX/ in android. 
 		static std::string s_writepath;
+
+	private:
+		/** embedded resource */
+		struct EmbeddedResource 
+		{
+		public:
+			EmbeddedResource():resource_data(0), data_len(0) {}
+			EmbeddedResource(const char* start, size_t len) : resource_data(start), data_len(len) {}
+
+			const char * const &data() const { return resource_data; }
+			const size_t &size() const { return data_len; }
+
+			const char *begin() const { return resource_data; }
+			const char *end() const { return resource_data + data_len; }
+
+			std::string toString() { return std::string(data(), size()); }
+
+		private:
+			const char* resource_data;
+			size_t data_len;
+		};
+
+		// all embedded resources
+		static std::map<std::string, EmbeddedResource> s_all_resources;
 	};
 
 	

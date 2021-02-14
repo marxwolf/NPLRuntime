@@ -5,6 +5,7 @@
 #include "IHeadOn3D.h"
 #include "IObjectScriptingInterface.h"
 #include <list>
+#include <vector>
 #include "unordered_ref_array.h"
 #include "EffectFileHandles.h"
 #include "ObjectEvent.h"
@@ -89,6 +90,20 @@ enum OBJECT_ATTRIBUTE
 	OBJ_SKIP_TERRAIN_NORMAL = 0x1<<16,
 	/* whether the object will be rendered with a custom renderer. The default draw function will do nothing. */
 	OBJ_CUSTOM_RENDERER = 0x1 << 17,
+};
+
+/** how physics is implemented in this object. */
+enum PHYSICS_METHOD{
+	/** only load physics when a dynamic physics object enters its bounding box.
+	* and automatically unload during a garbage collection.it is mutually exclusive with PHYSICS_ALWAYS_LOAD */
+	PHYSICS_LAZY_LOAD = 1,
+	/** load physics when this object is created. Never unload physics. it is mutually exclusive with PHYSICS_LAZY_LOAD*/
+	PHYSICS_ALWAYS_LOAD = 0x1 << 1,
+	/** this object has no physics. if this bit is on, it will override all other methods. */
+	PHYSICS_FORCE_NO_PHYSICS = 0x1 << 2,
+	/** if this bit is on, the object's physics data is read from the mesh entity (i.e. mesh faces with no textured material).
+	* if not on, the entire mesh entity is used as the physics data.*/
+	PHYSICS_LOAD_FROM_ASSET = 0x1 << 3
 };
 
 /**
@@ -401,8 +416,11 @@ public:
 	DEFINE_SCRIPT_EVENT_GET(CBaseObject, OnAssetLoaded);
 	ATTRIBUTE_METHOD1(CBaseObject, SetOnAssetLoaded_s, const char*)	{cls->SetOnAssetLoaded(p1); return S_OK;}
 
-	ATTRIBUTE_METHOD1(CBaseObject, GetRenderImportance_s, int*)			{*p1 = cls->GetRenderImportance(); return S_OK;}
-	ATTRIBUTE_METHOD1(CBaseObject, SetRenderImportance_s, int)		{cls->SetRenderImportance(p1); return S_OK;}
+	ATTRIBUTE_METHOD1(CBaseObject, GetRenderOrder_s, float*)			{ *p1 = cls->GetRenderOrder(); return S_OK; }
+	ATTRIBUTE_METHOD1(CBaseObject, SetRenderOrder_s, float)		{ cls->SetRenderOrder(p1); return S_OK; }
+
+	ATTRIBUTE_METHOD1(CBaseObject, GetRenderImportance_s, int*)			{ *p1 = cls->GetRenderImportance(); return S_OK; }
+	ATTRIBUTE_METHOD1(CBaseObject, SetRenderImportance_s, int)		{ cls->SetRenderImportance(p1); return S_OK; }
 
 	ATTRIBUTE_METHOD1(CBaseObject, GetRenderDistance_s, float*)			{*p1 = cls->GetRenderDistance(); return S_OK;}
 	ATTRIBUTE_METHOD1(CBaseObject, SetRenderDistance_s, float)		{cls->SetRenderDistance(p1); return S_OK;}
@@ -496,11 +514,16 @@ public:
 	ATTRIBUTE_METHOD1(CBaseObject, IsLastFrameRendered_s, bool*)		{ *p1 = cls->IsLastFrameRendered(); return S_OK; }
 	ATTRIBUTE_METHOD(CBaseObject, DestroyChildren_s)		{ cls->DestroyChildren(); return S_OK; }
 
-	ATTRIBUTE_METHOD1(CBaseObject, GetRenderWorldMatrix_s, Matrix4*)		{ cls->GetRenderWorldMatrix(p1); return S_OK; }
+	ATTRIBUTE_METHOD1(CBaseObject, GetRenderMatrix_s, Matrix4*)		{ cls->GetRenderMatrix(*p1); return S_OK; }
 
 	ATTRIBUTE_METHOD1(CBaseObject, SetLocalTransform_s, const Matrix4&)		{ cls->SetLocalTransform(p1); return S_OK; }
 	ATTRIBUTE_METHOD1(CBaseObject, GetLocalTransform_s, Matrix4*)		{ cls->GetLocalTransform(p1); return S_OK; }
 	
+	ATTRIBUTE_METHOD1(CBaseObject, IsPhysicsEnabled_s, bool*)	{ *p1 = cls->IsPhysicsEnabled(); return S_OK; }
+	ATTRIBUTE_METHOD1(CBaseObject, EnablePhysics_s, bool)	{ cls->EnablePhysics(p1); return S_OK; }
+
+	ATTRIBUTE_METHOD1(CBaseObject, IsLODEnabled_s, bool*) { *p1 = cls->IsLODEnabled(); return S_OK; }
+	ATTRIBUTE_METHOD1(CBaseObject, EnableLOD_s, bool) { cls->EnableLOD(p1); return S_OK; }
 
 	/** get attribute by child object. used to iterate across the attribute field hierarchy. */
 	virtual IAttributeFields* GetChildAttributeObject(const std::string& sName);
@@ -509,7 +532,6 @@ public:
 	/** we support multi-dimensional child object. by default objects have only one column. */
 	virtual int GetChildAttributeColumnCount();
 	virtual IAttributeFields* GetChildAttributeObject(int nRowIndex, int nColumnIndex = 0);
-	
 public:
 	
 	/** whether this object is global. By default,the type info is used to determine this.*/
@@ -665,6 +687,8 @@ public:
 	/** get whether object can be picked by mouse picking. */
 	bool CanPick();
 
+	/** if the object may contain physics*/
+	virtual bool CanHasPhysics();
 	/** 
 	* load the physics objects.
 	*/
@@ -674,6 +698,16 @@ public:
 	* load the physics object
 	*/
 	virtual void UnloadPhysics();
+
+	/** this function will turn on or off the physics of the object. */
+	virtual void EnablePhysics(bool bEnable);
+
+	/** by default physics is lazy-load when player walk into its bounding box, setting this to false will always load the physics. 
+	* Please note, one must EnablePhysics(true) before this one takes effect. 
+	*/
+	virtual void SetAlwaysLoadPhysics(bool bEnable);
+
+	virtual bool IsPhysicsEnabled();
 
 	/** this function is called, when the object is in view range. we may need to load the primary asset to update the bounding box, etc. 
 	* @return true if the object is ready to be rendered. 
@@ -687,6 +721,18 @@ public:
 	inline void SetRenderImportance(int nRenderImportance) {m_nRenderImportance = nRenderImportance;}
 	inline int GetRenderImportance() {return m_nRenderImportance;}
 
+	/** 0 if automatic, larger number renders after smaller numbered object. The following numbers are fixed in the pipeline and may subject to changes in later versions.
+	[1.0-2.0): solid big objects
+	[2.0-3.0): solid small objects
+	[3.0-3.0): sprites
+	[4.0-4.0): characters
+	[5.0-5.0): selection
+	[6.0-7.0): transparent object
+	[100.0, ...): rendered last and sorted by m_fRenderOrder
+	*/
+	float GetRenderOrder() const { return m_fRenderOrder; }
+	void SetRenderOrder(float val);
+
 	/// -- Base object functions
 	CChildObjectList_Type&		GetChildren(){ return m_children;};
 
@@ -699,7 +745,7 @@ public:
 	* Completely destroy child nodes from memory recursively. This is often called 
 	* by the root scene at application clean up
 	*/
-	void					DestroyChildren();
+	virtual void					DestroyChildren();
 
 	/**
 	* destroy a child by name. It returns the number of nodes that are destroyed. 
@@ -1178,6 +1224,10 @@ public:
 	inline bool IsGeometryDirty() const { return m_bGeometryDirty; }
 	void SetGeometryDirty(bool bDirty = true);
 
+	/** whether to enable lod if there is lod. Default to true. */
+	bool IsLODEnabled() const;
+	void EnableLOD(bool val);
+
 	/** this function is usually called after asset file has changed. and bounding box needs to be recalculated. */
 	virtual void UpdateGeometry();
 
@@ -1185,6 +1235,9 @@ public:
 	virtual void SetLocalTransform(const Matrix4& mXForm);
 	/** get local transform*/
 	virtual void GetLocalTransform(Matrix4* localTransform);
+
+	/** return triangle list */
+	virtual int GetMeshTriangleList(std::vector<Vector3>& output, int nOption = 0);
 
 protected:
 	/** the ID of the object. default to 0. it is regenerated automatically when GetID() is called and that the id is 0. */
@@ -1204,19 +1257,30 @@ protected:
 	CTerrainTile* m_tileContainer;
 	
 	/** the primary technique handle*/
-	int m_nTechniqueHandle;
+	int32 m_nTechniqueHandle;
 	
 	/** the frame number that this object is last accessed.*/
-	int m_nFrameNumber;
+	int32 m_nFrameNumber;
 	
 	/** this is the selection group index. if -1, it means that it was not selected. */
-	int m_nSelectGroupIndex;
+	int32 m_nSelectGroupIndex;
 
 	/** the larger, the more important. default to 0. only positive numbers are allowed. 
 	* During scene sorting, objects of the same group with larger render importance is rendered first, regardless of its camera to object distance
 	* we can limit the max number of objects drawn of a given render importance by calling SceneObject::SetMaxRenderCount() function 
 	*/
-	int m_nRenderImportance;
+	int32 m_nRenderImportance;
+
+	/** 0 if automatic, larger number renders after smaller numbered object. The following numbers are fixed in the pipeline and may subject to changes in later versions.
+	[1.0-2.0): solid big objects
+	[2.0-3.0): solid small objects
+	[3.0-3.0): sprites
+	[4.0-4.0): characters
+	[5.0-5.0): selection
+	[6.0-7.0): transparent object
+	[100.0, ...): rendered last and sorted by m_fRenderOrder
+	*/
+	float m_fRenderOrder;
 
 	/** we will not render this object if the object's position to camera eye position is further than this value. 
 	If this is 0 of negative, the global view clipping rule is applied. default to 0.f */
@@ -1226,7 +1290,9 @@ protected:
 	CParameterBlock* m_pEffectParamBlock;
 
 	/** whether the shape of the object is dirty, such as model, size, facing, local transform is changed. */
-	bool m_bGeometryDirty;
+	bool m_bGeometryDirty : 1;
+	/** whether to enable lod if there is lod. Default to true. */
+	bool m_bEnableLOD : 1;
 	/** enum of RenderSelectionStyle */
 	static int g_nObjectSelectionEffect;
 };

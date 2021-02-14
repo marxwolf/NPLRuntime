@@ -1515,7 +1515,7 @@ void Terrain::Paint(int detailTextureIndex, float brushRadius, float brushIntens
 
 uint8 *Terrain::GetMaskBits(int textureCellX, int textureCellY, int detailIndex, int &maskWidth, int &maskHeight)
 {
-	if (0 <= textureCellX && (uint32)textureCellX < m_NumberOfTextureTilesWidth && 0 <= (uint32)textureCellY && (uint32)textureCellY < m_NumberOfTextureTilesHeight)
+	if (0 <= textureCellX && (uint32)textureCellX < m_NumberOfTextureTilesWidth && 0 <= textureCellY && (uint32)textureCellY < m_NumberOfTextureTilesHeight)
 	{
 		TextureCell *pCell = GetTextureCell(textureCellX, textureCellY);
 		DetailTexture *pDet = pCell->GetDetail(GetTextureSet()->GetTexture(detailIndex));
@@ -1540,7 +1540,7 @@ uint8 *Terrain::GetMaskBits(int textureCellX, int textureCellY, int detailIndex,
 
 void Terrain::ReloadMask(int textureCellX, int textureCellY, int detailIndex)
 {
-	if (0 <= textureCellX && (uint32)textureCellX < m_NumberOfTextureTilesWidth && 0 <= (uint32)textureCellY && (uint32)textureCellY < m_NumberOfTextureTilesHeight)
+	if (0 <= textureCellX && (uint32)textureCellX < m_NumberOfTextureTilesWidth && 0 <= textureCellY && (uint32)textureCellY < m_NumberOfTextureTilesHeight)
 	{
 		TextureCell *pCell = GetTextureCell(textureCellX, textureCellY);
 		DetailTexture *pDet = pCell->GetDetail(GetTextureSet()->GetTexture(detailIndex));
@@ -1558,7 +1558,7 @@ void Terrain::ReloadMask(int textureCellX, int textureCellY, int detailIndex)
 
 int Terrain::NormalizeMask( int textureCellX, int textureCellY, int detailIndex, bool bReload)
 {
-	if (0 <= textureCellX && (uint32)textureCellX < m_NumberOfTextureTilesWidth && 0 <= (uint32)textureCellY && (uint32)textureCellY < m_NumberOfTextureTilesHeight)
+	if (0 <= textureCellX && (uint32)textureCellX < m_NumberOfTextureTilesWidth && 0 <= textureCellY && (uint32)textureCellY < m_NumberOfTextureTilesHeight)
 	{
 		TextureCell *pCell = GetTextureCell(textureCellX, textureCellY);
 		if(pCell)
@@ -3378,8 +3378,10 @@ bool Terrain::LoadFromConfigFile(const char* pFileName, float fSize, const char*
 	m_pDetailedTextureFactory->Init(DetailTextureMatrixSize, Size/DetailTextureMatrixSize);
 	for(int i=0;i<NumOfDetailTextures;i++)
 	{
-		if(cFile.GetNextLine(line, MAX_LINE)>0)
-			m_pDetailedTextureFactory->m_listTextures.push_back(string(line));
+		if (cFile.GetNextLine(line, MAX_LINE) > 0) {
+			string sTmp(line);
+			m_pDetailedTextureFactory->m_listTextures.push_back(sTmp);
+		}
 		else
 			return false;
 	}
@@ -3453,7 +3455,8 @@ void Terrain::LoadMaskFromDisk(bool bForceReload)
 	}
 	else
 	{
-		CAsyncLoader::GetSingleton().log(string("ParaFile.OpenAssetFile using local file:") + sMaskFile + "\n");
+		string sTmp = string("ParaFile.OpenAssetFile using local file:") + sMaskFile + "\n";
+		CAsyncLoader::GetSingleton().log(sTmp);
 		if(fileMask.OpenFile(sMaskFile.c_str(), true, NULL))
 		{
 			ReadMaskFile(fileMask);
@@ -3841,7 +3844,8 @@ void Terrain::OnLoad()
 		}
 		else
 		{
-			CAsyncLoader::GetSingleton().log(string("Terrain.OnLoad using local file:") + filename  + "\n");
+			string sTmp = string("Terrain.OnLoad using local file:") + filename + "\n";
+			CAsyncLoader::GetSingleton().log(sTmp);
 		}
 		
 		CGlobals::SetLoading(true);
@@ -3934,7 +3938,7 @@ bool Terrain::InvokeEditor(int nFieldID, const string& sParameters)
 	if(pField!=0)
 	{
 		bFound = true;
-		if (pField->m_sFieldname.substr(0, 2) == "On" || pField->m_sFieldname == "ConfigFile")
+		if (pField->GetFieldname().substr(0, 2) == "On" || pField->GetFieldname() == "ConfigFile")
 		{
 			///////////////////////////////////////////////////////////////////////////
 			// get the script file name from the field value

@@ -14,6 +14,8 @@
 #include "ZipArchive.h"
 #include "IParaEngineApp.h"
 #include "FileUtils.h"
+#include "util/StringBuilder.h"
+#include "ParaEngineSettings.h"
 #include "ParaFile.h"
 
 #if defined (WIN32) && !defined(PARAENGINE_MOBILE) && defined(PARAENGINE_CLIENT)
@@ -63,7 +65,13 @@ std::string ParaEngine::CParaFile::m_strExtractRootPath = "_EXTRACT\\";
 bool ParaEngine::CParaFile::m_bExtractFileToDisk = false;
 int ParaEngine::CParaFile::m_nDiskFilePriority = 0;
 
+StringBuilder* ToStringBuilder(CParaFile* pThis)
+{
+	return (StringBuilder*)(pThis->GetHandlePtr());
+}
+
 CParaFile::CParaFile()
+	:m_bMemoryFile(false), m_size(0)
 {
 	m_buffer = 0;
 	m_eof = true;
@@ -80,6 +88,7 @@ CParaFile::CParaFile(const CParaFile &f)
 	// disable copying
 }
 CParaFile::CParaFile(char* buf, int nBufferSize, bool bCopyBuffer)
+	:m_bMemoryFile(false), m_size(0)
 {
 	m_buffer = buf;
 	m_size = nBufferSize;
@@ -102,6 +111,7 @@ CParaFile::CParaFile(char* buf, int nBufferSize, bool bCopyBuffer)
 }
 
 CParaFile::CParaFile(const char* filename)
+	:m_bMemoryFile(false), m_size(0)
 {
 	m_curPos = 0;
 	m_buffer = 0;
@@ -115,6 +125,7 @@ CParaFile::CParaFile(const char* filename)
 }
 
 CParaFile::CParaFile(const char* filename, const char* relativePath)
+	:m_bMemoryFile(false), m_size(0)
 {
 	m_curPos = 0;
 	m_buffer = 0;
@@ -177,6 +188,11 @@ void CParaFile::TakeBufferOwnership()
 	m_bIsOwner = true;
 }
 
+bool ParaEngine::CParaFile::IsAbsolutePath(const std::string & path)
+{
+	return CFileUtils::IsAbsolutePath(path);
+}
+
 int CParaFile::DeleteTempFile(const string& sFilePattern)
 {
 	std::string sPattern = "temp/";
@@ -233,6 +249,8 @@ void CParaFile::ToCanonicalFilePath(string& output, const string& sfilename, boo
 
 bool CParaFile::DoesFileExist(const char* filename, bool bSearchZipFiles, bool bUseSearchPath)
 {
+	if (!filename)
+		return false;
 	uint32 dwWhereToSearch = (bSearchZipFiles ? (FILE_ON_DISK | FILE_ON_ZIP_ARCHIVE) : FILE_ON_DISK);
 	dwWhereToSearch = bUseSearchPath ? (dwWhereToSearch | FILE_ON_SEARCH_PATH) : dwWhereToSearch;
 	return DoesFileExist2(filename, dwWhereToSearch) != 0;
@@ -240,6 +258,8 @@ bool CParaFile::DoesFileExist(const char* filename, bool bSearchZipFiles, bool b
 
 int32 CParaFile::DoesFileExist2(const char* filename, uint32 dwWhereToSearch /*= FILE_ON_DISK*/, std::string* pDiskFilePath /*= NULL*/)
 {
+	if (!filename)
+		return 0;
 	int32 dwFoundPlace = FILE_NOT_FOUND;
 	if ((dwWhereToSearch & FILE_ON_SEARCH_PATH) > 0)
 	{
@@ -277,10 +297,8 @@ int32 CParaFile::DoesFileExist2(const char* filename, uint32 dwWhereToSearch /*=
 
 	if ((dwWhereToSearch & FILE_ON_DISK) >0 && (dwWhereToSearch & FILE_ON_ZIP_ARCHIVE) == 0)
 	{
-		if (CFileUtils::FileExist(sFilename)){
+		if (CFileUtils::FileExist2(sFilename, pDiskFilePath)){
 			dwFoundPlace = FILE_ON_DISK;
-			if (pDiskFilePath)
-				*pDiskFilePath = sFilename;
 		}
 	}
 	else
@@ -288,10 +306,8 @@ int32 CParaFile::DoesFileExist2(const char* filename, uint32 dwWhereToSearch /*=
 		// we will use GetDiskFilePriority(), to determine which one to search first.
 		if ((dwWhereToSearch & FILE_ON_DISK) > 0 && GetDiskFilePriority() >= 0)
 		{
-			if (CFileUtils::FileExist(sFilename)){
+			if (CFileUtils::FileExist2(sFilename, pDiskFilePath)){
 				dwFoundPlace = FILE_ON_DISK;
-				if (pDiskFilePath)
-					*pDiskFilePath = sFilename;
 			}
 		}
 
@@ -305,11 +321,16 @@ int32 CParaFile::DoesFileExist2(const char* filename, uint32 dwWhereToSearch /*=
 
 		if (!dwFoundPlace && (dwWhereToSearch & FILE_ON_DISK) > 0 && GetDiskFilePriority() < 0)
 		{
-			if (CFileUtils::FileExist(sFilename)){
+			if (CFileUtils::FileExist2(sFilename, pDiskFilePath)) {
 				dwFoundPlace = FILE_ON_DISK;
-				if (pDiskFilePath)
-					*pDiskFilePath = sFilename;
 			}
+		}
+	}
+	if (!dwFoundPlace && (dwWhereToSearch & FILE_ON_EXECUTABLE) > 0)
+	{
+		if (CFileUtils::DoesResFileExist(filename))
+		{
+			dwFoundPlace = FILE_ON_EXECUTABLE;
 		}
 	}
 	return dwFoundPlace;
@@ -380,7 +401,8 @@ int CParaFile::OpenAssetFile(const char* filename, bool bDownloadIfNotUpToDate, 
 	{
 		if (CParaFile::DoesFileExist(filename, false))
 		{
-			CAsyncLoader::GetSingleton().log(string("ParaFile.OpenAssetFile using disk file:") + filename + "\n");
+			string sTmp = string("ParaFile.OpenAssetFile using disk file:") + filename + "\n";
+			CAsyncLoader::GetSingleton().log(sTmp);
 			if (OpenFile(filename, true, relativePath))
 				return 1;
 			else
@@ -416,7 +438,8 @@ int CParaFile::OpenAssetFile(const char* filename, bool bDownloadIfNotUpToDate, 
 	}
 	else
 	{
-		CAsyncLoader::GetSingleton().log(string("ParaFile.OpenAssetFile using local file:") + filename + "\n");
+		string sTmp = string("ParaFile.OpenAssetFile using local file:") + filename + "\n";
+		CAsyncLoader::GetSingleton().log(sTmp);
 #ifdef PARAENGINE_MOBILE
 		if (relativePath == NULL)
 		{
@@ -533,6 +556,203 @@ bool CParaFile::UnzipMemToFile(const char* buffer, int nSize, const char* destFi
 	return bRes;
 }
 
+
+bool ParaEngine::CParaFile::GetFileInfo(const char* sfilename, CParaFileInfo& fileInfo, uint32 dwWhereToOpen /*= FILE_ON_DISK | FILE_ON_ZIP_ARCHIVE | FILE_ON_SEARCH_PATH*/)
+{
+	int32 dwFoundPlace = FILE_NOT_FOUND;
+	if (!GetDevDirectory().empty() && dwWhereToOpen != FILE_ON_ZIP_ARCHIVE && ((dwWhereToOpen & FILE_ON_ZIP_ARCHIVE) > 0))
+	{
+		// in development version, find in current directory and search path and then zip archive
+		dwWhereToOpen &= (~((uint32)FILE_ON_ZIP_ARCHIVE));
+		return GetFileInfo(sfilename, fileInfo, dwWhereToOpen) ||
+			GetFileInfo(fileInfo.m_sFullpath.empty() ? sfilename : fileInfo.m_sFullpath.c_str(), fileInfo, FILE_ON_ZIP_ARCHIVE);
+	}
+
+	if ((dwWhereToOpen & FILE_ON_SEARCH_PATH) > 0)
+	{
+		dwWhereToOpen &= (~((uint32)FILE_ON_SEARCH_PATH));
+
+		std::list<SearchPath>& searchPaths = CFileManager::GetInstance()->GetSearchPaths();
+
+		if (searchPaths.size() == 0 || (sfilename[0] == '/') || (sfilename[0] == '\\'))
+		{
+			if (dwWhereToOpen != 0)
+				return GetFileInfo(sfilename, fileInfo, dwWhereToOpen);
+			return false;
+		}
+		else
+		{
+			// find in current directory and zip file, and then in search path
+			bool bFound = (dwWhereToOpen != 0) && GetFileInfo(sfilename, fileInfo, dwWhereToOpen);
+			if (!bFound)
+			{
+				if (!fileInfo.m_sFullpath.empty())
+					sfilename = fileInfo.m_sFullpath.c_str();
+				list<SearchPath>::iterator itCurCP, itEndCP = searchPaths.end();
+				for (itCurCP = searchPaths.begin(); !bFound && itCurCP != itEndCP; ++itCurCP)
+				{
+					auto fullpath = (*itCurCP).GetPath() + sfilename;
+					bFound = GetFileInfo(fullpath.c_str(), fileInfo, FILE_ON_DISK);
+				}
+			}
+			return bFound;
+		}
+	}
+	char filename[MAX_PATH];
+
+	int i = 0;
+	int j = 0;
+#ifdef WIN32
+	// remove the heading slash
+	if ((sfilename[0] == '/') || (sfilename[0] == '\\'))
+		i++;
+#endif
+
+	// replace '\\' with '/'
+	for (; sfilename[i] != '\0' && j < (MAX_PATH - 1); i++, j++)
+	{
+		if (sfilename[i] == '\\')
+			filename[j] = '/';
+		else
+			filename[j] = sfilename[i];
+	}
+	filename[j] = '\0';
+
+	if (fileInfo.m_sFullpath.empty())
+		fileInfo.m_sFullpath = filename;
+
+	if (CFileReplaceMap::GetSingleton().ReplaceFile(fileInfo.m_sFullpath))
+	{
+		strcpy(filename, fileInfo.m_sFullpath.c_str());
+	}
+
+	if ((dwWhereToOpen & FILE_ON_DISK)>0 && GetDiskFilePriority() >= 0)
+	{
+		if (CFileUtils::GetFileInfo(filename, fileInfo))
+			return true;
+	}
+
+	if ((dwWhereToOpen & FILE_ON_ZIP_ARCHIVE) > 0)
+	{
+		CFileManager* pFileManager = CFileManager::GetInstance();
+		/// load from Zip files, if the file does not exist on disk
+		FileHandle fileHandle;
+		if (pFileManager->OpenFile(filename, fileHandle))
+		{
+			fileInfo.m_mode = CParaFileInfo::ModeFileInZip;
+			fileInfo.m_dwFileSize = pFileManager->GetFileSize(fileHandle);
+			if (fileHandle.m_pArchive){
+				fileInfo.m_sFullpath = std::string("zip://") + fileHandle.m_pArchive->GetArchiveName() + "/" + filename;
+			}
+			pFileManager->CloseFile(fileHandle);
+			return true;
+		}
+	}
+
+	if (GetDiskFilePriority() < 0 && (dwWhereToOpen & FILE_ON_DISK) > 0)
+	{
+		if (CFileUtils::GetFileInfo(filename, fileInfo))
+			return true;
+	}
+	return false;
+}
+
+
+void* ParaEngine::CParaFile::GetHandlePtr()
+{
+	return m_handle.m_pVoidPtr;
+}
+
+bool ParaEngine::CParaFile::IsWritablePath(const std::string& sFilename, bool bLogWarning)
+{
+	bool bWritable = true;
+	
+	// TODO security alert: only verify on win32, linux is more permissive at the moment. 
+	if (ParaEngineSettings::IsSandboxMode())
+	{
+		// skip writable, application and dev directory when it is absolute path.
+		if (IsAbsolutePath(sFilename))
+		{
+			std::string output, writablePath;
+			writablePath = CParaFile::GetWritablePath();
+			ToCanonicalFilePath(writablePath, writablePath);
+			ToCanonicalFilePath(output, sFilename);
+
+			if (output.compare(0, writablePath.length(), writablePath) != 0)
+			{
+				ToCanonicalFilePath(writablePath, CParaFile::GetCurDirectory(0));
+				if (output.compare(0, writablePath.length(), writablePath) != 0)
+				{
+					if (!CParaFile::GetDevDirectory().empty())
+					{
+						ToCanonicalFilePath(writablePath, CParaFile::GetDevDirectory());
+						if (output.compare(0, writablePath.length(), writablePath) != 0)
+							bWritable = false;
+					}
+					else
+						bWritable = false;
+				}
+			}
+		}
+		else
+		{
+			// TODO: only allow move in some given folder. we will only allow deletion in the specified user directory
+		}
+	}
+
+	if (!bWritable && bLogWarning)
+	{
+		OUTPUT_LOG("security alert: some one is telling the engine to open a file %s which is not allowed\r\n", sFilename.c_str());
+	}
+	return true;
+}
+
+bool ParaEngine::CParaFile::OpenFile(CArchive *pArchive, const char* filename, bool bUseCompressed)
+{
+	m_eof = true;
+	if (pArchive->OpenFile(filename, m_handle))
+	{
+		CFileManager* pFileManager = CFileManager::GetInstance();
+		m_curPos = 0;
+		if (bUseCompressed)
+		{
+			DWORD compressedSize = 0;
+			DWORD uncompressedSize = 0;
+			if (pFileManager->ReadFileRaw(m_handle, (LPVOID*)(&m_buffer), &compressedSize, &uncompressedSize))
+			{
+				m_size = compressedSize;
+				m_uncompressed_size = uncompressedSize;
+				// this fix a bug for non-compressed files
+				if (m_uncompressed_size > 0)
+					SetIsCompressed(true);
+				m_eof = false;
+			}
+			else
+			{
+				m_buffer = 0;
+				m_eof = true;
+			}
+		}
+		else
+		{
+			DWORD s = pFileManager->GetFileSize(m_handle);
+			DWORD bytesRead = 0;
+			m_buffer = new char[s + 1];
+			m_buffer[s] = '\0';
+			pFileManager->ReadFile(m_handle, m_buffer, s, &bytesRead);
+			pFileManager->CloseFile(m_handle);
+			m_size = (size_t)bytesRead;
+			m_eof = false;
+		}
+	}
+	else
+	{
+		m_eof = true;
+		m_buffer = 0;
+	}
+	return !m_eof;
+}
+
 bool CParaFile::OpenFile(const char* sfilename, bool bReadyOnly, const char* relativePath, bool bUseCompressed, uint32 dwWhereToOpen)
 {
 	int32 dwFoundPlace = FILE_NOT_FOUND;
@@ -543,11 +763,39 @@ bool CParaFile::OpenFile(const char* sfilename, bool bReadyOnly, const char* rel
 		return OpenFile(sfilename, bReadyOnly, relativePath, bUseCompressed, dwWhereToOpen) ||
 			OpenFile(m_filename.empty() ? sfilename : m_filename.c_str(), bReadyOnly, relativePath, bUseCompressed, FILE_ON_ZIP_ARCHIVE);
 	}
-
+#ifdef ANDROID
 	if ((dwWhereToOpen & FILE_ON_SEARCH_PATH) > 0)
 	{
 		dwWhereToOpen &= (~((uint32)FILE_ON_SEARCH_PATH));
+		std::vector<std::string> searchPaths = cocos2d::FileUtils::getInstance()->getSearchPaths();
 
+		if (searchPaths.size() == 0 || (sfilename[0] == '/') || (sfilename[0] == '\\') || relativePath != NULL)
+		{
+			if (dwWhereToOpen != 0)
+				return OpenFile(sfilename, bReadyOnly, relativePath, bUseCompressed, dwWhereToOpen);
+			return false;
+		}
+		else
+		{
+			// find in current directory and zip file, and then in search path
+			bool bFound = (dwWhereToOpen != 0) && OpenFile(sfilename, bReadyOnly, relativePath, bUseCompressed, dwWhereToOpen);
+			if (!bFound)
+			{
+				if (!m_filename.empty())
+					sfilename = m_filename.c_str();
+				vector<string>::iterator itCurCP, itEndCP = searchPaths.end();
+				for (itCurCP = searchPaths.begin(); !bFound && itCurCP != itEndCP; ++itCurCP)
+				{
+					bFound = OpenFile(sfilename, bReadyOnly, (*itCurCP).c_str(), bUseCompressed, FILE_ON_DISK);
+				}
+			}
+			return bFound;
+		}
+	}
+#else
+	if ((dwWhereToOpen & FILE_ON_SEARCH_PATH) > 0)
+	{
+		dwWhereToOpen &= (~((uint32)FILE_ON_SEARCH_PATH));
 		std::list<SearchPath>& searchPaths = CFileManager::GetInstance()->GetSearchPaths();
 
 		if (searchPaths.size() == 0 || (sfilename[0] == '/') || (sfilename[0] == '\\') || relativePath != NULL)
@@ -573,7 +821,7 @@ bool CParaFile::OpenFile(const char* sfilename, bool bReadyOnly, const char* rel
 			return bFound;
 		}
 	}
-
+#endif
 	m_bIsOwner = true;
 	char filename[MAX_PATH];
 
@@ -629,7 +877,7 @@ bool CParaFile::OpenFile(const char* sfilename, bool bReadyOnly, const char* rel
 
 	if (bReadyOnly)
 	{
-		if (!(!m_filename.empty() && m_filename[0] == ':'))
+		if (!(!m_filename.empty() && m_filename[0] == ':') && ((dwWhereToOpen & FILE_ON_EXECUTABLE) == 0))
 		{
 			BOOL succ = FALSE;
 			/// for ready-only file, we will read everything in to the buffer, and close the file handle
@@ -716,8 +964,10 @@ bool CParaFile::OpenFile(const char* sfilename, bool bReadyOnly, const char* rel
 		}
 		else
 		{
-			/** If the file name begins with ':', it is treated as a win32 resource.
-			e.g.":IDR_FX_OCEANWATER". loads data from a resource of type "TEXTFILE". See MSDN for more information about Windows resources.*/
+			/** If the file name begins with ':' or FILE_ON_EXECUTABLE is specified, it is treated as a win32 resource.
+			e.g.":IDR_FX_OCEANWATER". loads data from a resource of type "TEXTFILE". See MSDN for more information about Windows resources.
+			we also support C++ embedded binary file as external global variables in this way. 
+			*/
 			m_eof = true;
 			FileData data = CFileUtils::GetResDataFromFile(filename);
 			if (!data.isNull())
@@ -735,16 +985,26 @@ bool CParaFile::OpenFile(const char* sfilename, bool bReadyOnly, const char* rel
 		/// for write-only file, we will save file handle.
 		m_eof = true; /// set end of file to prevent read access.
 
-		FileHandle fileHandle = CFileUtils::OpenFile(filename, false, true);
-		
-		if (fileHandle.IsValid())
+		if (m_filename == "<memory>")
 		{
-			m_handle = fileHandle;
-			m_bDiskFileOpened = true;
+			m_bMemoryFile = true;
+			m_bIsOwner = false;
+			m_handle.m_pVoidPtr = new StringBuilder();
 			return true;
 		}
 		else
-			m_bDiskFileOpened = false;
+		{
+			FileHandle fileHandle = CFileUtils::OpenFile(filename, true, true);
+
+			if (fileHandle.IsValid())
+			{
+				m_handle = fileHandle;
+				m_bDiskFileOpened = true;
+				return true;
+			}
+			else
+				m_bDiskFileOpened = false;
+		}
 		return false;
 	}
 #ifdef FILE_LOGGER_HOOK
@@ -765,6 +1025,12 @@ bool CParaFile::SetEndOfFile()
 	{
 		return CFileUtils::SetEndOfFile(m_handle);
 	}
+	else if (m_bMemoryFile)
+	{
+		ToStringBuilder(this)->resize(m_curPos);
+		m_size = m_curPos;
+		m_eof = true;
+	}
 	return false;
 }
 
@@ -774,24 +1040,60 @@ void CParaFile::SetFilePointer(int lDistanceToMove, int dwMoveMethod)
 	if (m_bDiskFileOpened)
 	{
 		CFileUtils::SetFilePointer(m_handle, lDistanceToMove, dwMoveMethod);
+		if (dwMoveMethod == FILE_BEGIN)
+		{
+			m_curPos = lDistanceToMove;
+		}
+		else if (dwMoveMethod == FILE_END)
+		{
+			m_curPos = getPos();
+		}
+		else if (dwMoveMethod == FILE_CURRENT)
+		{
+			m_curPos += lDistanceToMove;
+		}
+	}
+	else if (m_bMemoryFile)
+	{
+		if (dwMoveMethod == FILE_BEGIN)
+		{
+			m_curPos = lDistanceToMove;
+		}
+		else if (dwMoveMethod == FILE_END)
+		{
+			m_curPos = ToStringBuilder(this)->size() - lDistanceToMove;
+		}
+		else if (dwMoveMethod == FILE_CURRENT)
+		{
+			m_curPos += lDistanceToMove;
+		}
 	}
 }
 
 size_t CParaFile::read(void* dest, size_t bytes)
 {
-	if (m_eof) return 0;
+	if (!m_bDiskFileOpened)
+	{
+		if (m_eof) return 0;
 
-	size_t rpos = m_curPos + bytes;
-	if (rpos >= m_size) {
-		bytes = m_size - m_curPos;
-		m_eof = true;
+		size_t rpos = m_curPos + bytes;
+		if (rpos >= m_size) {
+			bytes = m_size - m_curPos;
+			m_eof = true;
+		}
+
+		memcpy(dest, &(m_buffer[m_curPos]), bytes);
+
+		m_curPos = rpos;
+
+		return bytes;
 	}
-
-	memcpy(dest, &(m_buffer[m_curPos]), bytes);
-
-	m_curPos = rpos;
-
-	return bytes;
+	else
+	{
+		int bytesRead = CFileUtils::ReadBytes(m_handle, dest, bytes);
+		m_curPos += bytesRead;
+		return bytesRead;
+	}
 }
 
 int CParaFile::write(const void* src, int bytes)
@@ -801,6 +1103,22 @@ int CParaFile::write(const void* src, int bytes)
 		DWORD bytesWritten = CFileUtils::WriteBytes(m_handle, src, bytes);
 		m_curPos += bytesWritten;
 		return bytesWritten;
+	}
+	else if (m_bMemoryFile)
+	{
+		auto pBuilder = ToStringBuilder(this);
+		if (m_curPos == m_size)
+		{
+			pBuilder->append((const char*)src, bytes);
+			m_curPos += bytes;
+		}
+		else
+		{
+			pBuilder->WriteAt(m_curPos, (const char*)src, bytes);
+			m_curPos += bytes;
+		}
+		m_size = pBuilder->size();
+		m_buffer = pBuilder->str();
 	}
 	return 0;
 }
@@ -837,7 +1155,6 @@ void CParaFile::seek(int offset)
 	if (m_bDiskFileOpened)
 	{
 		SetFilePointer(offset, FILE_BEGIN);
-		m_curPos = offset;
 	}
 	else
 	{
@@ -848,8 +1165,15 @@ void CParaFile::seek(int offset)
 
 void CParaFile::seekRelative(int offset)
 {
-	m_curPos += offset;
-	m_eof = (m_curPos >= m_size);
+	if (! m_bDiskFileOpened)
+	{
+		m_curPos += offset;
+		m_eof = (m_curPos >= m_size);
+	}
+	else
+	{
+		SetFilePointer(offset, FILE_CURRENT);
+	}
 }
 
 void CParaFile::close()
@@ -857,6 +1181,11 @@ void CParaFile::close()
 	if (m_bDiskFileOpened)
 	{
 		CFileUtils::CloseFile(m_handle);
+	}
+	else if (m_bMemoryFile && m_handle.m_pVoidPtr!=NULL)
+	{
+		delete ToStringBuilder(this);
+		m_handle.m_pVoidPtr = NULL;
 	}
 	if (m_bIsOwner && m_buffer)
 		delete[] m_buffer;
@@ -867,12 +1196,26 @@ void CParaFile::close()
 
 size_t CParaFile::getSize()
 {
-	return m_size;
+	if(!m_bDiskFileOpened)
+		return m_size;
+	else
+	{
+		int nPos = getPos();
+		SetFilePointer(0, FILE_END);
+		int nSize = getPos();
+		SetFilePointer(nPos, FILE_BEGIN);
+		return nSize;
+	}
 }
 
 size_t CParaFile::getPos()
 {
-	return m_curPos;
+	if(!m_bDiskFileOpened)
+		return m_curPos;
+	else
+	{
+		return CFileUtils::GetFilePosition(m_handle);
+	}
 }
 
 char* CParaFile::getBuffer()
@@ -999,7 +1342,38 @@ string CParaFile::GetFileExtension(const string& sfilename)
 
 string CParaFile::GetAbsolutePath(const string& sRelativePath, const string& sRootPath)
 {
-	return sRootPath + sRelativePath;
+	std::string fullPath = sRootPath;
+	if (fullPath.size() > 0 && fullPath.back() != '/' && fullPath.back() != '\\')
+		fullPath += "/";
+
+	if (sRelativePath[0] == '.' && sRelativePath.size() > 3)
+	{
+		if (sRelativePath[1] == '/')
+		{
+			fullPath.append(sRelativePath.c_str() + 2);
+		}
+		else if (sRelativePath[1] == '.' && sRelativePath[2] == '/')
+		{
+			// such as ../../
+			fullPath = ParaEngine::CParaFile::GetParentDirectoryFromPath(fullPath, 1);
+			int nOffset = 3;
+			while (sRelativePath[nOffset] == '.' && sRelativePath[nOffset + 1] == '.' && sRelativePath[nOffset + 2] == '/')
+			{
+				fullPath = ParaEngine::CParaFile::GetParentDirectoryFromPath(fullPath, 1);
+				nOffset += 3;
+			}
+			fullPath.append(sRelativePath.c_str() + nOffset);
+		}
+		else
+		{
+			fullPath += sRelativePath;
+		}
+	}
+	else
+	{
+		fullPath += sRelativePath;
+	}
+	return fullPath;
 }
 
 string CParaFile::GetRelativePath(const string& sAbsolutePath, const string& sRootPath)
@@ -1077,10 +1451,16 @@ const string& CParaFile::GetCurDirectory(DWORD dwDirectoryType)
 	{
 		return GetDevDirectory();
 	}
-		
 	ParaEngine::Lock lock_(g_file_mutex);
 
-	if (dwDirectoryType >= 0 && dwDirectoryType<APP_SH_DESKTOP_DIR)
+	if (dwDirectoryType == APP_EXECUTABLE_DIR)
+	{
+		if (g_CurDirs[dwDirectoryType].empty())
+			g_CurDirs[dwDirectoryType] = CGlobals::GetApp()->GetModuleDir();
+		return g_CurDirs[dwDirectoryType];
+	}
+	
+	if (dwDirectoryType<APP_SH_DESKTOP_DIR)
 	{
 		if (!g_CurDirs[dwDirectoryType].empty())
 			return g_CurDirs[dwDirectoryType];
@@ -1485,7 +1865,7 @@ int CParaFile::WriteEncodedUInt(uint32_t value)
 	return write((const char*)buffer, count);
 }
 
-std::string CParaFile::GetWritablePath()
+const std::string& CParaFile::GetWritablePath()
 {
 	return CFileUtils::GetWritablePath();
 }

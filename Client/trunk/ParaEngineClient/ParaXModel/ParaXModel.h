@@ -68,6 +68,15 @@ namespace ParaEngine
 		ATTRIBUTE_METHOD1(CParaXModel, DumpTextureUsage_s, const char**)	{*p1 = cls->DumpTextureUsage(); return S_OK;}
 		ATTRIBUTE_METHOD1(CParaXModel, GetPolyCount_s, int*)	{*p1 = cls->GetPolyCount(); return S_OK;}
 		ATTRIBUTE_METHOD1(CParaXModel, GetPhysicsCount_s, int*)	{*p1 = cls->GetPhysicsCount(); return S_OK;}
+		ATTRIBUTE_METHOD1(CParaXModel, GetGeosetsCount_s, int*)	{ *p1 = (int)cls->geosets.size(); return S_OK; }
+		ATTRIBUTE_METHOD1(CParaXModel, GetRenderPassesCount_s, int*)	{ *p1 = (int)cls->passes.size(); return S_OK; }
+		ATTRIBUTE_METHOD1(CParaXModel, GetObjectNum_s, void**)	{ *p1 = (void*)(&(cls->GetObjectNum())); return S_OK; }
+		ATTRIBUTE_METHOD1(CParaXModel, GetVertices_s, void**)	{ *p1 = (void*)(cls->m_origVertices); return S_OK; }
+		ATTRIBUTE_METHOD1(CParaXModel, GetRenderPasses_s, void**)	{ *p1 = (void*)(&(cls->passes[0])); return S_OK; }
+		ATTRIBUTE_METHOD1(CParaXModel, GetGeosets_s, void**)	{ *p1 = (void*)(&(cls->geosets[0])); return S_OK; }
+		ATTRIBUTE_METHOD1(CParaXModel, GetIndices_s, void**)	{ *p1 = (void*)(&(cls->m_indices[0])); return S_OK; }
+		ATTRIBUTE_METHOD1(CParaXModel, GetAnimations_s, void**) { *p1 = (void*)(cls->anims); return S_OK; }
+		ATTRIBUTE_METHOD1(CParaXModel, SaveToDisk_s, char*) { cls->SaveToDisk(p1); return S_OK; }
 	public:
 		/** get polycount of this mesh object */
 		int GetPolyCount();
@@ -79,6 +88,8 @@ namespace ParaEngine
 		/** get the number of objects in the model.*/
 		inline const ParaXModelObjNum& GetObjectNum() const {return m_objNum;};
 		inline const ParaXHeaderDef& GetHeader() const {return m_header;};
+		/** check the minimum file version. Return true if file version is equal or higher than the given one. */
+		bool CheckMinVersion(int v0, int v1=0, int v2=0, int v3=0);
 
 		/** file loading for ParaX file type*/
 		void initVertices(int nVertices, ModelVertex* pVertices);
@@ -196,18 +207,47 @@ namespace ParaEngine
 	
 		void RenderNoAnim(SceneState* pSceneState);
 		void RenderSoftAnim(SceneState* pSceneState,CParameterBlock* pMaterialParams=NULL);
-		void RenderSoftNoAnim(SceneState* pSceneState);
+		void RenderSoftNoAnim(SceneState* pSceneState, CParameterBlock* pMaterialParams = NULL);
 		void RenderShaderAnim(SceneState* pSceneState);
 		void RenderBMaxModel(SceneState* pSceneState, CParameterBlock* pMaterialParams = NULL);
 		/** only called inside Render* function*/
 		void DrawPass(ModelRenderPass &p);
 		void DrawPass_NoAnim(ModelRenderPass &p);
+		void DrawPass_NoAnim_VB(ModelRenderPass &p, size_t start);
+		void DrawPass_BMax_VB(ModelRenderPass &p, size_t start);
 		void DrawPass_BMax(ModelRenderPass &p);
 		/** clear all face groups. */
 		void ClearFaceGroups();
 		bool HasAlphaBlendedObjects();
+
+		/** return the physics group id that is closest to nPhysicsGroup. or -1 if there is none. */
+		int GetNextPhysicsGroupID(int nPhysicsGroup = -1);
+		
+		/**
+		* Get the physics mesh in terms of vertices and indices.
+		* @param pNumVertices [out] number of vertices
+		* @param ppVerts [out] buffer contains all vertices. The caller needs to release the buffer using delete [] buffer.
+		* @param pNumTriangles [out] number of triangles, each triangle has three indices.
+		*	Please note that if the mesh contains no physics faces, the pNumTriangles is 0. However pNumVertices might be positive.
+		* @param ppIndices [out] buffer contains all indices. The caller needs to release the buffer using delete [] buffer.
+		* @param nMeshPhysicsGroup [in|out]: the mesh physics group to get. On return it will be assigned with the next mesh group.
+		* @return S_OK, if succeed.
+		*/
+		HRESULT ClonePhysicsMesh(DWORD* pNumVertices, Vector3 ** ppVerts, DWORD* pNumTriangles, DWORD** ppIndices, int* pnMeshPhysicsGroup = NULL, int* pnTotalMeshGroupCount = NULL);
+
+		void SaveToDisk(const char* path);
+
+		void SetRenderMethod(RENDER_METHOD method);
+
+		void SetVertexBufferDirty();
+
 		friend struct ModelRenderPass;
-			
+
+	private:
+		void InitVertexBuffer_NOANIM();
+		void InitVertexBuffer_BMAX();
+		void InitVertexBuffer();
+
 	public:
 		/** model header */
 		ParaXHeaderDef	m_header;
@@ -321,6 +361,20 @@ namespace ParaEngine
 
 		/** a mapping from known bone id to bone index. */
 		int m_boneLookup[MAX_KNOWN_BONE_NODE];
+
+	private:
+		enum VERTEX_BUFFER_STATE
+		{
+			NOT_SET = 0,
+			NEED_INIT			= 1,
+			INITED				= 2,
+			NOT_USE = 3,
+		};
+
+		VERTEX_BUFFER_STATE m_vbState;
+
+		static const size_t MAX_USE_VERTEX_BUFFER_SIZE = 1024 * 1024 * 256;
+		static size_t m_uUsedVB;
 	};
 
 	/** the pose of the character. It will override the one in the model.*/

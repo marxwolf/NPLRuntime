@@ -435,7 +435,7 @@ namespace ParaEngine
 
 	BlockChunk* RenderableChunk::GetChunk()
 	{
-		if (m_regionX > 0 && m_pWorld)
+		if (m_regionX >= 0 && m_pWorld)
 		{
 			BlockRegion * pOwnerBlockRegion = m_pWorld->GetRegion(m_regionX, m_regionZ);
 			if(pOwnerBlockRegion)
@@ -571,7 +571,7 @@ namespace ParaEngine
 	{
 		int32 totalFaceCount = 0;
 		int32 cachedGroupIdx = 0;
-		uint16_t nSize = pChunk->m_blockIndices.size();
+		uint16_t nSize = (uint16_t)pChunk->m_blockIndices.size();
 		std::map < int32_t, int > & instance_map = GetInstanceMap();
 		std::vector<InstanceGroup* >& instanceGroups = GetInstanceGroups();
 
@@ -853,7 +853,7 @@ namespace ParaEngine
 		
 		if (!m_memoryBuffers.empty())
 		{
-			for (ParaMemoryBuffer memBuffer : m_memoryBuffers)
+			for (ParaMemoryBuffer& memBuffer : m_memoryBuffers)
 			{
 				ParaVertexBuffer* pBuffer = RequestVertexBuffer(memBuffer.GetBufferSize() / (sizeof(BlockVertexCompressed) * 4));
 				if (pBuffer)

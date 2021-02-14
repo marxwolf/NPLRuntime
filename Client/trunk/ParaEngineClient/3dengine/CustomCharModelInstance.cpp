@@ -435,8 +435,11 @@ void CharModelInstance::UpdateGeosetsToModel(CParaXModel* pModel)
 		{
 			// show all geoset whose id ==0, there may be multiple such geosets.
 			pModel->showGeosets[j] = true;
+			
 		}
 	}
+
+	pModel->SetVertexBufferDirty();
 }
 
 void CharModelInstance::UpdateTexturesToModel(CParaXModel* pModel)
@@ -481,11 +484,15 @@ bool CharModelInstance::AnimateModel(SceneState * sceneState, const AnimIndex& C
 	ParaXEntity * pModelAsset = GetBaseModel();
 	if (pModelAsset == NULL)
 		return false;
-	int nIndex = sceneState ? pModelAsset->GetLodIndex(sceneState->GetCameraToCurObjectDistance()) : 0;
+	int nIndex = (sceneState && sceneState->IsLODEnabled()) ? pModelAsset->GetLodIndex(sceneState->GetCameraToCurObjectDistance()) : 0;
 	CParaXModel* pModel = pModelAsset->GetModel(nIndex);
 
 	if (pModel == NULL)
 		return false;
+	//--------------add by devilwalk-----------fix the entity which has no animation can not change the texture
+	if (!m_bIsCustomModel)
+		UpdateTexturesToModel(pModel);
+	//-------------------------------------------------
 	if (!pModel->HasAnimation())
 		return true;
 	if (!CurrentAnim.IsValid())

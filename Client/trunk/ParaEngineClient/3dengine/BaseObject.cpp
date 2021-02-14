@@ -35,8 +35,8 @@ int ParaEngine::CBaseObject::g_nObjectSelectionEffect = ParaEngine::RenderSelect
 // Class CBaseObject
 //-------------------------------------------------------------------
 CBaseObject::CBaseObject()
-	:m_tileContainer(NULL), m_nTechniqueHandle(-1), m_objType(_undefined), m_bGeometryDirty(false),
-m_dwAttribute(0),m_pEffectParamBlock(NULL), m_nFrameNumber(0),m_nID(0),m_nSelectGroupIndex(-1), m_nRenderImportance(0), m_fRenderDistance(0.f)
+	:m_tileContainer(NULL), m_nTechniqueHandle(-1), m_objType(_undefined), m_bGeometryDirty(false), m_bEnableLOD(true),
+	m_dwAttribute(0), m_pEffectParamBlock(NULL), m_nFrameNumber(0), m_nID(0), m_nSelectGroupIndex(-1), m_nRenderImportance(0), m_fRenderDistance(0.f), m_fRenderOrder(0.f)
 {
 }
 //-----------------------------------------------------------------------------
@@ -204,7 +204,7 @@ std::string CBaseObject::ToString(DWORD nMethod)
 	string sScript;
 	sScript = "-- ";
 	sScript.append(m_sIdentifer);
-	sScript.append("\r\n");
+	sScript.append("\n");
 	return sScript;
 }
 
@@ -216,10 +216,17 @@ void CBaseObject::AddChild(CBaseObject * pObject)
 {
 	if(pObject)
 	{
-		if (pObject->GetParent() != NULL)
-			pObject->GetParent()->RemoveChild(pObject);
+		CBaseObject* pParent = pObject->GetParent();
+		if (pParent != NULL) {
+			pObject->addref();
+			pParent->RemoveChild(pObject);
+		}
 		pObject->SetParent(this);
 		m_children.push_back(pObject);
+
+		if (pParent != NULL) {
+			pObject->delref();
+		}
 	}
 }
 
@@ -751,9 +758,29 @@ TextureEntity* ParaEngine::CBaseObject::GetDefaultReplaceableTexture( int Replac
 	return NULL;
 }
 
+void ParaEngine::CBaseObject::EnablePhysics(bool bEnable)
+{
+
+}
+
+void ParaEngine::CBaseObject::SetAlwaysLoadPhysics(bool bEnable)
+{
+	EnablePhysics(bEnable);
+}
+
+bool ParaEngine::CBaseObject::IsPhysicsEnabled()
+{
+	return false;
+}
+
 bool ParaEngine::CBaseObject::ViewTouch()
 {
 	return true;
+}
+
+void ParaEngine::CBaseObject::SetRenderOrder(float val)
+{
+	m_fRenderOrder = val;
 }
 
 void ParaEngine::CBaseObject::SetRenderDistance( float fDist )
@@ -781,7 +808,12 @@ bool ParaEngine::CBaseObject::CanPick()
 	return ! CheckAttribute(OBJ_SKIP_PICKING); // OBJ_SKIP_PICKING | OBJ_VOLUMN_INVISIBLE 
 }
 
-void ParaEngine::CBaseObject::SetSkipTerrainNormal( bool bSkip )
+bool ParaEngine::CBaseObject::CanHasPhysics()
+{
+	return false;
+}
+
+void ParaEngine::CBaseObject::SetSkipTerrainNormal(bool bSkip)
 {
 	SetAttribute(OBJ_SKIP_TERRAIN_NORMAL, bSkip);
 }
@@ -862,6 +894,16 @@ IAttributeFields* ParaEngine::CBaseObject::GetChildAttributeObject(const std::st
 void ParaEngine::CBaseObject::SetGeometryDirty(bool bDirty /*= true*/)
 {
 	m_bGeometryDirty = bDirty;
+}
+
+bool ParaEngine::CBaseObject::IsLODEnabled() const
+{
+	return m_bEnableLOD;
+}
+
+void ParaEngine::CBaseObject::EnableLOD(bool val)
+{
+	m_bEnableLOD = val;
 }
 
 IAttributeFields* ParaEngine::CBaseObject::GetChildAttributeObject(int nRowIndex, int nColumnIndex)
@@ -980,6 +1022,52 @@ void ParaEngine::CBaseObject::GetLocalTransform(Matrix4* localTransform)
 	}
 }
 
+int ParaEngine::CBaseObject::GetMeshTriangleList(vector<Vector3>& output, int nOption)
+{
+	output.clear();
+	auto pAsset = GetPrimaryAsset();
+	if (pAsset && pAsset->IsValid())
+	{
+		pAsset->LoadAsset();
+		if (pAsset->GetType() == AssetEntity::parax)
+		{
+			ParaXEntity* pParaXEntity = (ParaXEntity*)pAsset;
+			CParaXModel* pModel = pParaXEntity->GetModel();
+			if (pModel)
+			{
+				int nPass = (int)pModel->passes.size();
+				auto origVertices = pModel->m_origVertices;
+				auto indices = pModel->m_indices;
+				for (auto& p : pModel->passes)
+				{
+					if (p.indexCount > 0)
+					{
+						int nIndexOffset = p.GetStartIndex();
+						int numFaces = p.indexCount / 3;
+						if(output.capacity() < (output.size() + p.indexCount))
+							output.reserve(output.size() + p.indexCount);
+						for (int i= 0; i< numFaces; ++i)
+						{
+							int nVB = 3 * i;
+							for (int k = 0; k < 3; ++k)
+							{
+								auto a = indices[nIndexOffset + nVB + k];
+								auto vert = origVertices[a];
+								output.push_back(vert.pos);
+							}
+						}
+					}
+				}
+			}
+		}
+		else if (pAsset->GetType() == AssetEntity::mesh)
+		{
+
+		}
+	}
+	return (int)(output.size() / 3);
+}
+
 void ParaEngine::CBaseObject::UpdateGeometry()
 {
 	SetGeometryDirty(false);
@@ -1024,14 +1112,15 @@ void CBaseObject::Clone(CBaseObject* obj)
 {
 	if(obj!=NULL)
 	{
-		memcpy(obj,this,sizeof(CBaseObject));
+		// *obj = *this;
+		memcpy((void*)obj, (void*)this,sizeof(CBaseObject));
 		obj->m_refcount = 0;
 	}
 }
 
 CBaseObject* CBaseObject::Clone()
 {
-	CBaseObject *obj=new CBaseObject();
+	CBaseObject *obj = new CBaseObject();
 	Clone(obj);
 	return obj;
 }
@@ -1061,8 +1150,10 @@ int CBaseObject::InstallFields(CAttributeClass* pClass, bool bOverride)
 	pClass->AddField("showboundingbox", FieldType_Bool, (void*)SetShowBoundingBox_s, (void*)GetShowBoundingBox_s, NULL, NULL, bOverride);
 	pClass->AddField("PhysicsGroup", FieldType_Int, (void*)SetPhysicsGroup_s, (void*)GetPhysicsGroup_s, NULL, NULL, bOverride);
 	pClass->AddField("PhysicsGroupMask", FieldType_DWORD, (void*)SetPhysicsGroupMask_s, (void*)GetPhysicsGroupMask_s, NULL, NULL, bOverride);
+	pClass->AddField("EnablePhysics", FieldType_Bool, (void*)EnablePhysics_s, (void*)IsPhysicsEnabled_s, NULL, "", bOverride);
 	pClass->AddField("SelectGroupIndex", FieldType_Int, (void*)SetSelectGroupIndex_s, (void*)GetSelectGroupIndex_s, NULL, NULL, bOverride);
 	pClass->AddField("On_AssetLoaded", FieldType_String, (void*)SetOnAssetLoaded_s, (void*)GetOnAssetLoaded_s, NULL, NULL, bOverride);
+	pClass->AddField("RenderOrder", FieldType_Float, (void*)SetRenderOrder_s, (void*)GetRenderOrder_s, NULL, "", bOverride);
 	pClass->AddField("RenderImportance", FieldType_Int, (void*)SetRenderImportance_s, (void*)GetRenderImportance_s, NULL, "", bOverride);
 	pClass->AddField("RenderDistance", FieldType_Float, (void*)SetRenderDistance_s, (void*)GetRenderDistance_s, NULL, "", bOverride);
 	pClass->AddField("reset", FieldType_void, (void*)Reset_s, NULL, NULL, "reset object", bOverride);
@@ -1100,8 +1191,9 @@ int CBaseObject::InstallFields(CAttributeClass* pClass, bool bOverride)
 	pClass->AddField("IsDead", FieldType_Bool, (void*)SetDead_s, (void*)IsDead_s, NULL, "", bOverride);
 	pClass->AddField("opacity", FieldType_Float, (void*)SetOpacity_s, (void*)GetOpacity_s, NULL, "", bOverride);
 	pClass->AddField("DestroyChildren", FieldType_void, (void*)DestroyChildren_s, (void*)0, NULL, "", bOverride);
-	pClass->AddField("RenderWorldMatrix", FieldType_Matrix4, (void*)0, (void*)GetRenderWorldMatrix_s, NULL, "", bOverride);
+	pClass->AddField("RenderWorldMatrix", FieldType_Matrix4, (void*)0, (void*)GetRenderMatrix_s, NULL, "", bOverride);
 	pClass->AddField("LocalTransform", FieldType_Matrix4, (void*)SetLocalTransform_s, (void*)GetLocalTransform_s, NULL, "", bOverride);
+	pClass->AddField("IsLodEnabled", FieldType_Bool, (void*)EnableLOD_s, (void*)IsLODEnabled_s, NULL, "", bOverride);
 	return S_OK;
 }
 

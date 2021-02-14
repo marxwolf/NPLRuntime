@@ -11,6 +11,7 @@
 #include "ParaEngineSettings.h"
 #include "util/StringHelper.h"
 #include "util/bitlib_lua.h"
+#include "util/lua_pack.h"
 
 using namespace ParaEngine;
 
@@ -41,6 +42,7 @@ extern "C"
 
 #include <luabind/luabind.hpp>
 #include <luabind/out_value_policy.hpp>
+#include <luabind/raw_policy.hpp>
 
 #include "ParaScriptingIO.h"
 #include "ParaScriptingIC.h"
@@ -240,6 +242,8 @@ void CNPLScriptingState::LoadHAPI_Globals()
 	lua_register(L, "luaopen_sqlite3", luaopen_sqlite3);
 	// load bit lib
 	lua_register(L, "luaopen_bit", luaopen_bit_local);
+	// load string.pack
+	lua_register(L, "luaopen_lua_pack", luaopen_lua_pack);
 
 #if defined(USE_NPL_CURL)
 	// load cURL
@@ -313,6 +317,8 @@ void CNPLScriptingState::LoadHAPI_Globals()
 			def("ReadRegStr", & ParaGlobal::ReadRegStr), 
 			def("ReadRegDWORD", & ParaGlobal::ReadRegDWORD), 
 			def("WriteRegDWORD", & ParaGlobal::WriteRegDWORD), 
+			
+			def("SelectAttributeObject", &ParaGlobal::SelectAttributeObject),
 
 			def("log", & ParaGlobal::WriteToLogFile)
 		]
@@ -358,6 +364,7 @@ void CNPLScriptingState::LoadHAPI_Globals()
 		.def("GetSchematicsMinMax", &ParaAttributeObject::GetSchematicsMinMax, pure_out_value(_5) + pure_out_value(_6))
 		.def("GetSchematicsType", &ParaAttributeObject::GetSchematicsType)
 		.def("GetField", &ParaAttributeObject::GetField)
+		.def("GetField", &ParaAttributeObject::GetField2, raw(_3))
 		.def("SetField", &ParaAttributeObject::SetField)
 		.def("CallField", &ParaAttributeObject::CallField)
 		.def("ResetField", &ParaAttributeObject::ResetField)
@@ -440,8 +447,11 @@ void CNPLScriptingState::LoadHAPI_Globals()
 		[
 			// declarations
 			def("GetAttributeObject", &ParaScripting::ParaMovie::GetAttributeObject),
-			def("TakeScreenShot", & ParaScripting::ParaMovie::TakeScreenShot),
-			def("TakeScreenShot", & ParaScripting::ParaMovie::TakeScreenShot3),
+			def("TakeScreenShot_Async", &ParaScripting::ParaMovie::TakeScreenShot_Async),
+			def("TakeScreenShot_Async", &ParaScripting::ParaMovie::TakeScreenShot2_Async),
+			def("TakeScreenShot_Async", &ParaScripting::ParaMovie::TakeScreenShot3_Async),
+			def("TakeScreenShot", &ParaScripting::ParaMovie::TakeScreenShot),
+			def("TakeScreenShot", &ParaScripting::ParaMovie::TakeScreenShot3),
 			def("RenderToTexture", & ParaScripting::ParaMovie::RenderToTexture),
 			def("ResizeImage", & ParaScripting::ParaMovie::ResizeImage),
 			def("GetImageInfo", & ParaScripting::ParaMovie::GetImageInfo, pure_out_value(_2) + pure_out_value(_3) + pure_out_value(_4)),
@@ -486,6 +496,7 @@ void CNPLScriptingState::LoadHAPI_Globals()
 				.def("IsValid", &ParaFileObject::IsValid)
 				.def("seek", &ParaFileObject::seek)
 				.def("seekRelative", &ParaFileObject::seekRelative)
+				.def("getpos", &ParaFileObject::getpos)
 				.def("SetFilePointer", &ParaFileObject::SetFilePointer)
 				.def("SetEndOfFile", &ParaFileObject::SetEndOfFile)
 				.def("GetText", &ParaFileObject::GetText)
@@ -497,8 +508,18 @@ void CNPLScriptingState::LoadHAPI_Globals()
 				.def("ReadFloat", &ParaFileObject::ReadFloat)
 				.def("WriteInt", &ParaFileObject::WriteInt)
 				.def("ReadInt", &ParaFileObject::ReadInt)
+				.def("WriteUInt", &ParaFileObject::WriteUInt)
+				.def("ReadUInt", &ParaFileObject::ReadUInt)
+				.def("WriteShort", &ParaFileObject::WriteShort)
+				.def("ReadShort", &ParaFileObject::ReadShort)
+				.def("WriteWord", &ParaFileObject::WriteWord)
+				.def("ReadWord", &ParaFileObject::ReadWord)
+				.def("WriteDouble", &ParaFileObject::WriteDouble)
+				.def("ReadDouble", &ParaFileObject::ReadDouble)
 				.def("GetFileSize", &ParaFileObject::GetFileSize)
+				.def("ReadString", &ParaFileObject::ReadString)
 				.def("WriteString", &ParaFileObject::WriteString)
+				.def("WriteString", &ParaFileObject::WriteString2)
 				.def("writeline", &ParaFileObject::writeline)
 				.def("readline", &ParaFileObject::readline)
 				.def("GetBase64String", &ParaFileObject::GetBase64String)
@@ -508,6 +529,7 @@ void CNPLScriptingState::LoadHAPI_Globals()
 				.def(constructor<>())
 				.def("IsValid", &ParaZipWriter::IsValid)
 				.def("ZipAdd", &ParaZipWriter::ZipAdd)
+				.def("ZipAddData", &ParaZipWriter::ZipAddData)
 				.def("ZipAddFolder", &ParaZipWriter::ZipAddFolder)
 				.def("AddDirectory", &ParaZipWriter::AddDirectory)
 				.def("close", &ParaZipWriter::close),
@@ -538,7 +560,9 @@ void CNPLScriptingState::LoadHAPI_Globals()
 			
 			def("open", & ParaIO::open),
 			def("openimage", & ParaIO::openimage),
+			def("openimage", &ParaIO::openimage2),
 			def("readline", & ParaIO::readline),
+			def("readline", &ParaIO::readline2),
 			def("WriteString", & ParaIO::WriteString),
 			def("write", & ParaIO::write),
 			def("DoesFileExist", & ParaIO::DoesFileExist),
@@ -558,6 +582,7 @@ void CNPLScriptingState::LoadHAPI_Globals()
 			def("UpdateMirrorFiles", & ParaIO::UpdateMirrorFiles),
 			def("CRC32", & ParaIO::CRC32),
 			def("GetFileSize", & ParaIO::GetFileSize),
+			def("GetFileInfo", &ParaIO::GetFileInfo),
 			def("AddSearchPath", & ParaIO::AddSearchPath),
 			def("AddSearchPath2", & ParaIO::AddSearchPath2),
 			def("RemoveSearchPath", & ParaIO::RemoveSearchPath),

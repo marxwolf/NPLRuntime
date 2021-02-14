@@ -5,14 +5,7 @@
 
 namespace ParaEngine
 {
-	extern void GetToken(const string s, string& sToken);
-
-	/**@def default biped turning speed. */
-#define	SPEED_TURN		2.7f
-	/**@def default biped walking speed. */
-#define	SPEED_WALK		0.9f
-	/**@def default biped normal turning speed. */
-#define	SPEED_NORM_TURN		0.7f
+	struct IParaPhysicsActor;
 
 	/**
 	*		It can be used to represent biped object(like human, re spawning monsters)
@@ -102,6 +95,15 @@ namespace ParaEngine
 			/// flashing the biped. Not implemented. 
 			RenderSelectionStyle_flash = 2,
 		};
+
+
+		/**@def default biped turning speed. */
+		static const float SPEED_TURN;
+		/**@def default biped walking speed. */
+		static const float SPEED_WALK;
+		/**@def default biped normal turning speed. */
+		static const float SPEED_NORM_TURN;
+		
 	public:
 		CBipedObject(void);
 		virtual ~CBipedObject(void);
@@ -266,7 +268,6 @@ namespace ParaEngine
 		void SetBlendingFactor(float fBlendingFactor);
 
 		bool FlyTowards(double dTimeDelta, const DVector3& vPosTarget, float fStopDistance, bool * pIsSlidingWall);
-
 	public:
 		/** how the character reacts to physics in the MoveTowards() functions*/
 		void SetMovementStyle(PhysicsMoveStyle nValue){ m_nMovementStyle = nValue; };
@@ -275,13 +276,6 @@ namespace ParaEngine
 		PhysicsMoveStyle  GetMovementStyle(){ return m_nMovementStyle; };
 
 		bool CanAnimOpacity() const;
-
-		/**
-		* return the world matrix of the object for rendering. same as GetRenderMatrix
-		* @param pOut: the output.
-		* @return: same as pOut. or NULL if not exists.
-		*/
-		virtual Matrix4* GetRenderWorldMatrix(Matrix4* pOut, int nRenderNumber = 0);;
 
 		/** get the world transformation matrix for the current object.
 		* @return: return pOut
@@ -315,6 +309,7 @@ namespace ParaEngine
 		*/
 		virtual void SetPrimaryTechniqueHandle(int nHandle);
 
+		virtual void SetPosition(const DVector3& v);
 		/**
 		* Set the base character model.
 		*/
@@ -349,7 +344,7 @@ namespace ParaEngine
 		
 
 		/// used as KEY for batch rendering
-		virtual AssetEntity* GetPrimaryAsset();;
+		virtual AssetEntity* GetPrimaryAsset();
 
 		virtual void SetNormal(const Vector3 & pNorm);
 		virtual Vector3 GetNormal();
@@ -834,6 +829,16 @@ namespace ParaEngine
 		* accordingly. */
 		virtual int On_Net_Receive(DWORD dwNetType, DWORD dwParam1, DWORD dwParam2);
 
+		/** if the object may contain physics*/
+		virtual bool CanHasPhysics();
+		virtual void LoadPhysics();
+		virtual void UnloadPhysics();
+		virtual void SetPhysicsGroup(int nGroup);
+		virtual int GetPhysicsGroup();
+		virtual void EnablePhysics(bool bEnable);
+		virtual bool IsPhysicsEnabled();
+		/** get the number of physics actors. If physics is not loaded, the returned value is 0. */
+		int GetStaticActorCount();
 
 	protected:
 		void AnimateIdle(double dTimeDelta);
@@ -841,6 +846,8 @@ namespace ParaEngine
 
 		void AnimateUserControl(double dTimeDelta);
 
+		/** get parax asset entity if its type is ParaX model. */
+		ParaXEntity* GetParaXEntity();
 	private:
 		// -- data structuring
 		asset_ptr<AssetEntity>			m_pMultiAnimationEntity;
@@ -937,6 +944,12 @@ namespace ParaEngine
 
 		/** groups Mask used to filter physics objects, default to 0xffffffff*/
 		DWORD m_dwPhysicsGroupMask;
+
+		/** all static physics actors in physics engine */
+		vector<IParaPhysicsActor*> m_staticActors;
+		// any bit wise combination of PHYSICS_METHOD
+		DWORD m_dwPhysicsMethod;
+		uint32 m_nPhysicsGroup;
 
 		/// true:m_fFacingTarget movement is ignored.
 		bool m_bIgnoreFacingTarget : 1;

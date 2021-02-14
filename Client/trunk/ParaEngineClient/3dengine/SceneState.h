@@ -7,6 +7,7 @@
 #include "ParaXModel/ParticleSystemRef.h"
 #include "BillBoardViewInfo.h"
 #include "BaseObject.h"
+
 using namespace std;
 
 namespace ParaEngine
@@ -22,6 +23,8 @@ namespace ParaEngine
 	class CEffectFile;
 	class CSortedFaceGroups;
 	class IScene;
+	class CLightObject;
+
 	struct SceneState;
 
 	enum RENDER_GROUP{
@@ -43,6 +46,7 @@ namespace ParaEngine
 		RENDER_SHADOWMAP = 0x1 << 15,
 		RENDER_TRANSPARENT_CHARACTERS = 0x1 << 16,
 		RENDER_OWNER_DRAW = 0x1 << 17,
+		RENDER_POST_RENDER_LIST = 0x1 << 18,
 	};
 
 #define CHECK_SELECTION(x) ((dwSelection&(x))>0)
@@ -176,6 +180,22 @@ namespace ParaEngine
 		};
 	};
 
+	/** first sort from large to small by render importance and if render importance are same from near camera to far from camera.*/
+	template<class Type>
+	struct GreaterPostRenderObj_ByOrder
+	{
+		inline bool operator()(
+			const Type& _Left,
+			const Type& _Right
+			) const
+		{
+			float leftOrder = _Left.m_pRenderObject->GetRenderOrder();
+			float rightOrder = _Right.m_pRenderObject->GetRenderOrder();
+			return (leftOrder < rightOrder) ||
+				((leftOrder == rightOrder) && ((_Left.m_pRenderObject->GetPrimaryTechniqueHandle()) < (_Right.m_pRenderObject->GetPrimaryTechniqueHandle())));
+		};
+	};
+
 	template<class Type>
 	struct GreaterPostRenderObj
 	{
@@ -299,6 +319,9 @@ namespace ParaEngine
 		/** get camera to current object distance. this is automatically set by the pipeline before drawing a certain object.  */
 		float GetCameraToCurObjectDistance();
 
+		/** is lod enabled*/
+		bool IsLODEnabled();
+
 		/** set shadow map camera to current object distance. This is usually a fixed value for all shadow casters, such as 500 meters */
 		void SetShadowMapCameraToCurObjectDistance(float fDist);
 
@@ -363,6 +386,11 @@ namespace ParaEngine
 		/** one of the enum RENDER_PIPELINE_ORDER */
 		void SetCurrentRenderPipeline(int val);
 
+		void AddToDeferredLightPool(CLightObject * lightObject);
+
+		bool IsGlobalLODEnabled() const;
+		void EnableGlobalLOD(bool val);
+
 	public:
 		IScene* GetScene(){ return m_pScene; }
 
@@ -386,6 +414,8 @@ namespace ParaEngine
 		/// true if the it's currently performing batch rendering
 		bool			bIsBatchRender : 1;
 		bool			m_bCameraMoved : 1;
+		bool			m_bGlobalLOD : 1;
+		
 		/// translucent face sorting is enabled. 
 		bool			m_bEnableTranslucentFaceSorting;
 		/** how many times the scene has been rendered since its creation. If this is 0, we may be pre-render stage or rendering is disabled.*/
@@ -444,6 +474,7 @@ namespace ParaEngine
 		typedef unordered_array<ParticleSystemRef>	List_ParticleSystemPtr_Type;
 		typedef std::vector<AlphaPostRenderObject>	List_AlphaPostRenderObject_Type;
 		typedef std::vector<PostRenderObjectWeakPtr>	List_HeadOnRenderObject_Type;
+		typedef std::vector<CLightObject*>				List_LightObject_Type;
 		
 
 		/** Same as IRefObject except that it tracks references of the object. */
@@ -477,7 +508,7 @@ namespace ParaEngine
 		listPRBiped: biped, sorted by primary asset entity, this is always the MA asset.
 		Note: post rendering are performed in the order listed above.
 		*/
-		SceneState::List_PostRenderObject_Type		listPostRenderingObjects;   /// list of general post rendering object
+		SceneState::List_PostRenderObject_TrackRef_Type		listPostRenderingObjects;   /// list of general post rendering object
 #ifdef USE_DIRECTX_RENDERER
 		SceneState::List_CSpriteObjectPtr_Type	listPRSprite;				/// list of Post Rendering object: Sprite
 #endif
@@ -503,6 +534,7 @@ namespace ParaEngine
 		SceneState::List_PostRenderObject_Type		listPortals;
 		SceneState::List_PostRenderObject_Type		listBoundingBox;
 		SceneState::List_PostRenderObject_Type		listSelections;
+		SceneState::List_LightObject_Type			listDeferredLightObjects;
 		// like the render target 
 		unordered_array<WeakPtr>		listOwnerDrawObjs;
 

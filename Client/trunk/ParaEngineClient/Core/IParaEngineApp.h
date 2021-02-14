@@ -95,7 +95,7 @@ namespace ParaEngine
 	/**
 	*  a table of virtual functions which are used by plug-ins to access the game engine 
 	*/
-	class IParaEngineApp : BaseInterface
+	class IParaEngineApp : public BaseInterface
 	{
 	public:
 		/** This is the first function that should be called when acquiring the IParaEngineApp interface. 
@@ -267,7 +267,7 @@ namespace ParaEngine
 		virtual void SetWindowText(const char* pChar) = 0;
 		/** get the window title when at windowed mode */
 		virtual const char* GetWindowText() = 0;
-
+		
 		/** get the current mouse cursor position. 
 		* @param pX: out
 		* @param pY: out
@@ -438,11 +438,22 @@ namespace ParaEngine
 		virtual void SetHasClosingRequest(bool val) {};
 
 		/** load NPL package from a disk folder.
-		* it will first search the dev folder, then the current folder, and then the executable folder and all of its parent folders,
+		* it will first search the dev folder, then the current folder, and then the executable folder and all of its parent folders.
 		* Once the folder is found, it is added to the global search path.
 		* @param sFilePath: for example, "npl_packages/main/" is always loaded on start up.
+		* @param pOutMainFile: output of the actual folder name or a main loader file path in the main loader.
 		*/
-		virtual bool LoadNPLPackage(const char* sFilePath) { return false; };
+		virtual bool LoadNPLPackage(const char* sFilePath, std::string * pOutMainFile = NULL) { return false; };
+
+		/** render the current frame and does not return until everything is presented to screen.
+		* this function is usually used to draw the animated loading screen. */
+		virtual bool ForceRender() { return false; };
+
+		/** get the NPL bin directory (main executable directory). this one ends with "/" */
+		virtual const char* GetModuleDir() { return NULL; };
+
+		/* whether the window size is fixed. */
+		virtual void FixWindowSize(bool fixed) = 0;
 	};
 
 }

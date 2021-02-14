@@ -7,6 +7,7 @@
 // Notes: 
 //-----------------------------------------------------------------------------
 #include "ParaEngine.h"
+#include "util/CSingleton.h"
 #include "ZipArchive.h"
 #include "FileUtils.h"
 #include "BlockEngine/BlockReadWriteLock.h"
@@ -39,8 +40,7 @@ CFileManager::~CFileManager(void)
 
 CFileManager * CFileManager::GetInstance()
 {
-	static CFileManager myIntance;
-	return &myIntance;
+	return CAppSingleton<CFileManager>::GetInstance();
 }
 
 bool CFileManager::OpenArchiveEx(const std::string& path, const std::string& sRootDir)
@@ -114,13 +114,26 @@ bool CFileManager::OpenFile(const char* filename, FileHandle& handle)
 	bool bOpened = false;
 	bool bMPQProcessed = false;
 
+	char tempStr[1024];
+	int i = 0;
+
+	while (filename[i])
+	{
+		tempStr[i] = filename[i] == '\\' ?  '/' : filename[i];
+		i++;
+	};
+	tempStr[i] = 0;
+
+	uint32 hash = SZipFileEntry::Hash(tempStr, true);
+	ArchiveFileFindItem item(tempStr, nullptr, &hash);
+
 	Scoped_ReadLock<BlockReadWriteLock> lock_(*m_pArchiveLock);
 	std::list<CArchive*>::iterator itCurCP, itEndCP = m_archivers.end();
 	for( itCurCP = m_archivers.begin(); (!bOpened) && itCurCP != itEndCP; ++ itCurCP)
 	{
 		CArchive* pArchive = (*itCurCP);
 		//PERF_BEGIN("ZIP_Search");
-		bOpened = pArchive->OpenFile(filename, handle);
+		bOpened = pArchive->OpenFile(&item, handle);
 		//PERF_END("ZIP_Search");
 	}
 	return bOpened;
@@ -128,6 +141,8 @@ bool CFileManager::OpenFile(const char* filename, FileHandle& handle)
 
 bool CFileManager::DoesFileExist(const char* filename)
 {
+	if (!filename)
+		return false;
 	FileHandle handle;
 	bool bExists = OpenFile(filename, handle);
 	CloseFile(handle);
@@ -249,6 +264,17 @@ IAttributeFields* ParaEngine::CFileManager::GetChildAttributeObject(const std::s
 	for (CArchive* pArchive : m_archivers)
 	{
 		if (pArchive->IsArchive(sName))
+			return pArchive;
+	}
+	return NULL;
+}
+
+PE_CORE_DECL CArchive* ParaEngine::CFileManager::GetArchive(const string& path)
+{
+	Scoped_ReadLock<BlockReadWriteLock> lock_(*m_pArchiveLock);
+	for (CArchive* pArchive : m_archivers)
+	{
+		if (pArchive->IsArchive(path))
 			return pArchive;
 	}
 	return NULL;

@@ -31,6 +31,10 @@
 #define PARAENGINE_SUPPORT_WRITE_REG
 #endif
 
+#if defined(WIN32) && defined(PARAENGINE_CLIENT)
+#define PARAENGINE_SUPPORT_READ_REG
+#endif 
+
 #ifndef MAX_LINE
 /**@def max number of characters in a single line */
 #define MAX_LINE	1024
@@ -173,6 +177,14 @@ void ParaGlobal::ExitApp()
 void ParaScripting::ParaGlobal::Exit(int nReturnCode)
 {
 	CGlobals::GetApp()->Exit(nReturnCode);
+}
+
+// current selected object
+ParaAttributeObject g_selected_attr_obj;
+
+void ParaScripting::ParaGlobal::SelectAttributeObject(const ParaAttributeObject& obj)
+{
+	g_selected_attr_obj = obj;
 }
 
 bool ParaGlobal::WriteToFile(const char* filename, const char* strMessage)
@@ -326,7 +338,7 @@ ParaAttributeObject::ParaAttributeObject(IAttributeFields * pAttribute, CAttribu
 
 bool ParaAttributeObject::IsValid() const
 {
-	return (m_pAttribute);
+	return (m_pAttribute.get()!=0);
 }
 
 int  ParaAttributeObject::GetClassID() const
@@ -370,7 +382,7 @@ const char* ParaAttributeObject::GetFieldName(int nIndex)
 		CAttributeField* pField = m_pAttClass->GetField(nIndex);
 		if (pField != 0)
 		{
-			return pField->m_sFieldname.c_str();
+			return pField->GetFieldname().c_str();
 		}
 	}
 	return CGlobals::GetString(G_STR_EMPTY).c_str();
@@ -537,6 +549,8 @@ luabind::object ParaScripting::ParaAttributeObject::GetDynamicFieldImp(CDynamicA
 			}
 			break;
 		}
+		default:
+			break;
 		}
 	}
 	else
@@ -630,6 +644,8 @@ luabind::object ParaScripting::ParaAttributeObject::GetFieldKeyValue(const char*
 			}
 			break;
 		}
+		default:
+			break;
 		}
 	}
 	return object(output);
@@ -693,6 +709,8 @@ void ParaScripting::ParaAttributeObject::SetFieldKeyValue(const char* sFieldname
 					}
 					break;
 				}
+				default:
+					break;
 				}
 			}
 		}
@@ -766,6 +784,8 @@ int ParaScripting::ParaAttributeObject::SetDynamicField(const char* sFieldname, 
 				}
 				break;
 			}
+			default:
+				break;
 			}
 			if (!isKeyExist)
 				nResult = 1;
@@ -840,6 +860,8 @@ int ParaScripting::ParaAttributeObject::SetDynamicField_(int nFieldIndex, const 
 				}
 				break;
 			}
+			default:
+				break;
 			}
 			if (!isKeyExist)
 				nResult = 1;
@@ -956,6 +978,199 @@ const ParaUIObject& ParaScripting::ParaAttributeObject::QueryUIObject()
 	static ParaUIObject s_obj;
 	s_obj.m_pObj = IsValid() ? ((CGUIBase*)(m_pAttribute->QueryObject(ATTRIBUTE_CLASSID_CGUIBase))) : NULL;
 	return s_obj;
+}
+
+object ParaAttributeObject::GetField2(const char* sFieldname, lua_State* L)
+{
+	if (!IsValid())
+	{
+		// return nil
+		return object();
+	}
+
+	CAttributeField* pField = m_pAttClass->GetField(sFieldname);
+	if (pField == 0 || !pField->HasGetFunction())
+		// return nil
+		return object();
+
+	switch (pField->m_type)
+	{
+	case FieldType_Bool:
+	{
+		bool value;
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+			return object(L, value);
+		else
+			// return nil;
+			return object();
+		break;
+	}
+	case FieldType_Int:
+	case FieldType_Enum:
+	{
+		int value;
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+			return object(L, value);
+		else
+			// return nil;
+			return object();
+		break;
+	}
+	case FieldType_DWORD:
+	{
+		DWORD value;
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+			return object(L, value);
+		else
+			// return nil;
+			return object();
+		break;
+	}
+	case FieldType_Float:
+	{
+		float value;
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+			return object(L, value);
+		else
+			// return nil;
+			return object();
+		break;
+	}
+	case FieldType_Double:
+	{
+		double value;
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+			return object(L, value);
+		else
+			// return nil;
+			return object();
+		break;
+	}
+	case FieldType_String:
+	{
+		const char* value;
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+			return object(L, value);
+		else
+			// return nil;
+			return object();
+		break;
+	}
+	case FieldType_Vector2:
+	{
+		Vector2 value;
+
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+		{
+			object out = newtable(L);
+			out[1] = value.x;
+			out[2] = value.y;
+			return out;
+		}
+		else
+			// return nil;
+			return object();
+		
+		break;
+	}
+	case FieldType_Vector3:
+	{
+		Vector3 value;
+
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+		{
+			object out = newtable(L);
+			out[1] = value.x;
+			out[2] = value.y;
+			out[3] = value.z;
+			return out;
+		}
+		else
+			// return nil;
+			return object();
+		
+		break;
+	}
+	case FieldType_DVector3:
+	{
+		DVector3 value;
+
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+		{
+			object out = newtable(L);
+			out[1] = value.x;
+			out[2] = value.y;
+			out[3] = value.z;
+			return out;
+		}
+		else
+			// return nil;
+			return object();
+		
+		break;
+	}
+	case FieldType_Vector4:
+	{
+		Vector4 value;
+
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+		{
+			object out = newtable(L);
+			out[1] = value.x;
+			out[2] = value.y;
+			out[3] = value.z;
+			out[4] = value.w;
+			return out;
+		}
+		else
+			// return nil;
+			return object();
+	
+		break;
+	}
+	case FieldType_Quaternion:
+	{
+		Quaternion value;
+
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+		{
+			object out = newtable(L);
+			out[1] = value.x;
+			out[2] = value.y;
+			out[3] = value.z;
+			out[4] = value.w;
+			return out;
+		}
+		else
+			// return nil;
+			return object();
+		
+		break;
+	}
+	case FieldType_Matrix4:
+	{
+		Matrix4 value;
+		if (SUCCEEDED(pField->Get(m_pAttribute.get(), &value)))
+		{
+			object out = newtable(L);
+			for (int i = 0; i < 16; i++) {
+				out[i + 1] = value._m[i];
+			}
+			return out;
+		}
+		else
+			// return nil;
+			return object();
+
+		break;
+	}
+	default:
+		break;
+	}
+
+
+	// return nil
+	return object();
 }
 
 object  ParaAttributeObject::GetField(const char*  sFieldname, const object& output)
@@ -1548,7 +1763,7 @@ bool ParaScripting::ParaGlobal::WriteRegStr(const string& root_key, const string
 
 const char* ParaScripting::ParaGlobal::ReadRegStr(const string& root_key, const string& sSubKey, const string& name)
 {
-#ifdef PARAENGINE_CLIENT
+#ifdef PARAENGINE_SUPPORT_READ_REG
 	if (CParaEngineApp::GetInstance())
 		return CParaEngineApp::GetInstance()->ReadRegStr(root_key, sSubKey, name);
 	else
@@ -1573,7 +1788,7 @@ bool ParaScripting::ParaGlobal::WriteRegDWORD(const string& root_key, const stri
 
 DWORD ParaScripting::ParaGlobal::ReadRegDWORD(const string& root_key, const string& sSubKey, const string& name)
 {
-#ifdef PARAENGINE_CLIENT
+#ifdef PARAENGINE_SUPPORT_READ_REG
 	if (CParaEngineApp::GetInstance())
 		return CParaEngineApp::GetInstance()->ReadRegDWORD(root_key, sSubKey, name);
 	else
@@ -1719,5 +1934,36 @@ extern "C" {
 	PE_CORE_DECL void ParaGlobal_WriteToLogFile(const char* strMessage)
 	{
 		ParaScripting::ParaGlobal::WriteToLogFile(strMessage);
+	}
+
+	PE_CORE_DECL bool ParaGlobal_SetFieldCData(const char* sFieldname, void* pValue)
+	{
+		if (g_selected_attr_obj.IsValid())
+		{
+			if (g_selected_attr_obj.IsValid())
+			{
+				CAttributeField* pField = g_selected_attr_obj.m_pAttClass->GetField(sFieldname);
+				if (pField != 0 && pField->HasSetFunction())
+				{
+					pField->Set(g_selected_attr_obj.m_pAttribute.get(), pValue);
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	PE_CORE_DECL bool ParaGlobal_GetFieldCData(const char* sFieldname, void* pValueOut)
+	{
+		if (g_selected_attr_obj.IsValid())
+		{
+			CAttributeField* pField = g_selected_attr_obj.m_pAttClass->GetField(sFieldname);
+			if (pField != 0 && pField->HasGetFunction())
+			{
+				pField->Get(g_selected_attr_obj.m_pAttribute.get(), pValueOut);
+				return true;
+			}
+		}
+		return false;
 	}
 };

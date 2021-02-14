@@ -486,18 +486,36 @@ void CEnvironmentSim::CheckLoadPhysics(CShapeSphere* points, int nPointCount)
 		{
 			pTile = queueTiles.front();
 			queueTiles.pop();
-			/// For each mesh physics object in the tile, load its physics.
+			
 			{
+				// For each mesh physics object in the tile, load its physics.
 				for (auto pObj : pTile->m_listFreespace)
 				{
-					if(pObj->GetType()==CBaseObject::MeshPhysicsObject)
+					if (pObj && pObj->CanHasPhysics())
 					{
 						IViewClippingObject* pViewClippingObject = pObj->GetViewClippingObject();
 						for(int j=0;j<nPointCount; ++j)
 						{
 							if(pViewClippingObject->TestCollisionSphere(&(points[j].GetCenter()), points[j].GetRadius(), 2))
 							{
-								((CMeshPhysicsObject*)pObj)->LoadPhysics();
+								pObj->LoadPhysics();
+								break;
+							}
+						}
+					}
+				}
+
+				// for visiting bipeds
+				for (auto pObj : pTile->m_listVisitors)
+				{
+					if (pObj && pObj->CanHasPhysics())
+					{
+						IViewClippingObject* pViewClippingObject = pObj->GetViewClippingObject();
+						for (int j = 0; j < nPointCount; ++j)
+						{
+							if (pViewClippingObject->TestCollisionSphere(&(points[j].GetCenter()), points[j].GetRadius(), 2))
+							{
+								pObj->LoadPhysics();
 								break;
 							}
 						}

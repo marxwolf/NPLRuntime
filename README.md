@@ -1,10 +1,12 @@
 [![Build Status](https://travis-ci.org/LiXizhi/NPLRuntime.svg?branch=master)](https://travis-ci.org/LiXizhi/NPLRuntime)
+[![Build status](https://ci.appveyor.com/api/projects/status/k9e19sceq859bt4p?svg=true)](https://ci.appveyor.com/project/DarrenGZY/nplruntime-e8wud)
 [![Code docs](https://codedocs.xyz/LiXizhi/NPLRuntime.svg)](https://codedocs.xyz/LiXizhi/NPLRuntime)
+[![Documentation Status](https://readthedocs.org/projects/tatfook-npldocs/badge/?version=master)](http://docs.paraengine.com/en/master/?badge=master)
 
 
 Welcome to the NPL Runtime!
 -------------------------
-NPL or Neural Parallel Language is an open source, high-performance, scripting language. Its syntax is 100%-compatible with [lua](http://www.lua.org). NPL runtime provides essential functionality for building `3D/2D/Server` applications that runs on `windows/linux/android/iOS`. It is similar to [java](www.java.com), but is more flexible in nature.
+NPL or Neural Parallel Language is an open source, high-performance, scripting language. Its syntax is 100%-compatible with [lua](http://www.lua.org). NPL runtime provides essential functionality for building `3D/2D/Server` applications that runs on `windows/linux/android/iOS`. 
 
 ### Install Guide
 ```
@@ -20,13 +22,13 @@ See [Install Guide](https://github.com/LiXizhi/NPLRuntime/wiki/InstallGuide) for
 
 ### Example code
 ```lua
-local function activate()
+-- this is from `helloworld.npl`
+NPL.activate("(gl)helloworld.npl", {data="hello world!"})
+this(msg){
    if(msg) then
       print(msg.data or "");
    end
-   NPL.activate("(gl)helloworld.lua", {data="hello world!"})
-end
-NPL.this(activate); 
+}
 ```
 
 ### Why a New Programming Language?
@@ -36,13 +38,13 @@ NPL prototype was designed in 2004, which was then called 'parallel oriented lan
 ### Usage
 To run with GUI, use:
 ``` 
-    npl [parameters...]
+npl [filename] [parameters...]
 ```    
 To run in server mode, use:
 ```	
-	npls [filename] [parameters...]
+npls [filename] [parameters...]
 ```    
 For example:
 ```	
-	npls hello.lua
+npls hello.npl
 ```    

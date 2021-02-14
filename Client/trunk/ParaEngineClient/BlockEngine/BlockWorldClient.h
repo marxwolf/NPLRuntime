@@ -80,7 +80,9 @@ namespace ParaEngine
 		ATTRIBUTE_METHOD1(BlockWorldClient, GetMaxBufferRebuildPerTick_FarChunk_s, int*)		{ *p1 = cls->GetMaxBufferRebuildPerTick_FarChunk(); return S_OK; }
 		ATTRIBUTE_METHOD1(BlockWorldClient, SetMaxBufferRebuildPerTick_FarChunk_s, int)	{ cls->SetMaxBufferRebuildPerTick_FarChunk(p1); return S_OK; }
 
-		
+		ATTRIBUTE_METHOD1(BlockWorldClient, GetUsePointTextureFiltering_s, bool*)	{ *p1 = cls->GetUsePointTextureFiltering(); return S_OK; }
+		ATTRIBUTE_METHOD1(BlockWorldClient, SetUsePointTextureFiltering_s, bool)	{ cls->SetUsePointTextureFiltering(p1); return S_OK; }
+
 		//////////////////////////////////////////////////////////////////////////
 		//static functions
 		//////////////////////////////////////////////////////////////////////////
@@ -124,6 +126,9 @@ namespace ParaEngine
 		* pass any value in enumeration BlockRenderMethod
 		*/
 		void Render(BlockRenderPass nRenderPass = BlockRenderPass_Opaque, std::vector<BlockRenderTask*>* pCurRenderQueue = NULL, int nRenderMethod = -1);
+
+		/** render light geometry. */
+		void RenderDeferredLights();
 
 		std::vector<BlockRenderTask*>* GetRenderQueueByPass(BlockRenderPass nRenderPass);
 
@@ -263,7 +268,9 @@ namespace ParaEngine
 		//helper function to compare render order
 		static bool CompareRenderOrder(BlockRenderTask* v0, BlockRenderTask* v1);
 
-		
+		/** whether to use point texture filtering for all ui images rendered. */
+		bool GetUsePointTextureFiltering();
+		void SetUsePointTextureFiltering(bool bUse);
 	protected:
 		virtual void UpdateActiveChunk();
 
@@ -349,6 +356,9 @@ namespace ParaEngine
 		asset_ptr<CEffectFile> m_normal_mesh_effect_fancy;
 		asset_ptr<CEffectFile> m_bmax_model_effect_fancy;
 		asset_ptr<CEffectFile> m_terrain_fancy;
+
+		/** deferred light geometry for {D3DLIGHT_POINT, D3DLIGHT_SPOT, D3DLIGHT_DIRECTIONAL} */
+		asset_ptr<CEffectFile> m_lightgeometry_effects[3];
 #endif
 		CMultiFrameBlockWorldRenderer* m_pMultiFrameRenderer;
 
@@ -390,6 +400,9 @@ namespace ParaEngine
 		/** if true, if we want to use a separate thread to fill the chunk buffer.
 		*/
 		bool m_bAsyncChunkMode;
+
+		/** default to false for all UI images rendered. */
+		bool m_bUsePointTextureFiltering;
 	};
 }
 

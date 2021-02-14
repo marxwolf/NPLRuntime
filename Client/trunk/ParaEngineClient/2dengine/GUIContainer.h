@@ -7,6 +7,7 @@ namespace ParaEngine
 {
 	class CGUIButton;
 	class CGUIScrollBar;
+	class CGUIEditBox;
 	struct GUITextureElement;
 
 	/**
@@ -58,7 +59,7 @@ namespace ParaEngine
 		/**
 		* Clear all the control's children
 		*/
-		void					DestroyChildren();
+		virtual void DestroyChildren();
 
 		/**
 		* Sort children by z-order. it will just move child in min distance to make them in order. 
@@ -211,8 +212,15 @@ namespace ParaEngine
 		/** click the default button inside this container. If no default button is found, this function will return false. */
 		virtual bool			ActivateDefaultButton();
 
+
 		/** get the default button inside this container. If no default button is found, this function will return NULL. */
 		virtual CGUIButton*		GetDefaultButton();
+
+		/* the next editbox inside this container will get focus. If no next editbox is found, this function will return false. */
+		virtual bool			ActivateNextEdit(CGUIEditBox* curCtrl = nullptr);
+
+		/** get the next editbox inside this container. If no default button is found, this function will return nullptr. */
+		virtual CGUIEditBox*		GetNextEdit(CGUIEditBox* curCtrl = nullptr);
 
  		/**
 		* Get the texture element.
@@ -288,6 +296,10 @@ namespace ParaEngine
 
 		/** get the index of the given child. */
 		int GetChildIndex(CGUIBase* pChild);
+
+		virtual bool IsNonClientTestEnabled();
+		virtual void EnableNonClientTest(bool val);
+
 	protected:
 		/** a render target will be created with the same name as this object. */
 		virtual CRenderTarget* CreateGetRenderTarget(bool bCreateIfNotExist = true);
@@ -323,9 +335,10 @@ namespace ParaEngine
 		QPoint				m_compositionPoint;
 		int					m_nPopupStyle;//obsolete
 		bool				m_bIsTop;
-
 		bool				m_bBatching;//if a Batching operation is on the way
 		bool				m_bNeedCalClientRect;//if the child rect needs to be recalculate
+		/** default to false. if true, we will set GUIRoot's non-client attribute. */
+		bool				m_bEnableNonClientTest;
 		friend class CGUIRoot;
 	};
 }

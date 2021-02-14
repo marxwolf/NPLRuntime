@@ -25,6 +25,8 @@
 *
 */
 #include "ParaEngine.h"
+#include "PluginManager.h"
+#include "PluginAPI.h"
 #include "ic/ICDBManager.h"
 #include "luaSQLite.h"
 #include <stdio.h>
@@ -69,6 +71,8 @@ extern "C"
 #define KEY_TRACE_DATA(p)	KEY((p), 7)
 #define KEY_BUSY_DATA(p)	KEY((p), 8)
 #define KEY_COMMIT_DATA(p)	KEY((p), 9)
+#define KEY_WAL_PAGE_DATA(p)	KEY((p), 10)
+#define KEY_WAL_CHECKPOINT_DATA(p)	KEY((p), 11)
 
 #define KEY_XFUNC(p)		KEY((p), 1)
 #define KEY_XSTEP(p)		KEY((p), 2)
@@ -80,12 +84,19 @@ extern "C"
 #define KEY_XTRACE(p)		KEY((p), 1)
 #define KEY_XBUSY(p)		KEY((p), 1)
 #define KEY_XCOMMIT(p)		KEY((p), 1)
+#define KEY_XWAL_PAGE(p)		KEY((p), 1)
+#define KEY_XWAL_CHECKPOINT(p)		KEY((p), 1)
+
+
+using namespace ParaEngine;
 
 
 struct  DB
 {
 public:
-	DB() : L(0), key2value_pos(0){};
+	DB() : L(0), key2value_pos(0){
+		CheckLoadSqliteInterface();
+	};
 	//sqlite3 * pSqlite3;
 	ParaEngine::asset_ptr<ParaEngine::DBEntity> m_pDBEntity;
 	lua_State * 	L;
@@ -94,6 +105,27 @@ public:
 	inline sqlite3* GetSqlite3() {
 		return m_pDBEntity->GetDBHandle();
 		//return pSqlite3;
+	}
+
+	/* static function to expose core interface to sqlite3's raft WAL interface. */
+	static void CheckLoadSqliteInterface() {
+		static bool bLoaded = false;
+		if (!bLoaded)
+		{
+			/**  plugin dll file path */
+#ifdef _DEBUG
+			const char* SQLITE_DLL_FILE_PATH = "sqlite_d.dll";
+#else
+			const char* SQLITE_DLL_FILE_PATH = "sqlite.dll";
+#endif
+			bLoaded = true;
+			DLLPlugInEntity* pPluginEntity = CGlobals::GetPluginManager()->GetPluginEntity(SQLITE_DLL_FILE_PATH);
+			if (pPluginEntity == 0)
+			{
+				// load the plug-in if it has never been loaded before. 
+				pPluginEntity = ParaEngine::CGlobals::GetPluginManager()->LoadDLL("", SQLITE_DLL_FILE_PATH);
+			}
+		}
 	}
 };
 
@@ -124,6 +156,9 @@ static CB_Data * get_named_cb_data(lua_State * L, DB * db, void * table_key, int
 #define get_trace_cb_data(L, db)		get_cb_data((L), (db), KEY_TRACE_DATA(db))
 #define get_busy_cb_data(L, db)			get_cb_data((L), (db), KEY_BUSY_DATA(db))
 #define get_commit_cb_data(L, db)		get_cb_data((L), (db), KEY_COMMIT_DATA(db))
+// for wal page hook
+#define get_wal_page_cb_data(L, db)		get_cb_data((L), (db), KEY_WAL_PAGE_DATA(db))
+#define get_wal_checkpoint_cb_data(L, db)		get_cb_data((L), (db), KEY_WAL_CHECKPOINT_DATA(db))
 
 static void register_callback(lua_State * L, DB * db, void * cb_key, int callback_pos);
 static void init_callback_usage(lua_State * L, DB * db);
@@ -132,6 +167,17 @@ static void push_callback(lua_State * L, DB * db, void * cb_key);
 static int pop_break_condition(lua_State * L);
 static void push_nil_or_string(lua_State * L, const char * str);
 
+// registry is used for callback data and callback funcs
+// two level table for named_cb_data(function and collations), one level for others (cb_data)
+// for callback data:
+// 		registry = { cbdata_key = CB_DATA*/{} } cbdata_key is db* + i
+//		i is differ for diffrent cb_data, like busy is 8, commit is 9
+//		CB_DATA* a new address allocated and should free when sqlite(db) close
+//    the value can be table in 
+// for callback funcs
+// 		registry = { table_key = {}} table_key is db* + 1
+// 		value table's key is (CB_DATA* + j),
+// 		j is usually 1 but can be 2 and 3 in l_sqlite3_create_function
 
 static void push_private_table(lua_State * L, void * table_key)
 {
@@ -144,6 +190,7 @@ static void push_private_table(lua_State * L, void * table_key)
 		lua_pushlightuserdata(L, table_key);
 		lua_pushvalue(L, -2);
 		lua_rawset(L, LUA_REGISTRYINDEX);
+		// here we leave the new table for later use.
 	}
 }
 
@@ -203,6 +250,7 @@ static CB_Data * get_named_cb_data(lua_State * L, DB * db, void * table_key, int
 	{
 		lua_pushvalue(L, name_pos);
 		cb_data = new_cb_data(L, db);
+		// this may be wrong
 		lua_rawset(L, LUA_REGISTRYINDEX);
 	}
 	else
@@ -487,6 +535,8 @@ FUNC( l_sqlite3_close )
 	delete_private_value(L, KEY_TRACE_DATA(db));
 	delete_private_value(L, KEY_BUSY_DATA(db));
 	delete_private_value(L, KEY_COMMIT_DATA(db));
+	delete_private_value(L, KEY_WAL_PAGE_DATA(db));
+	delete_private_value(L, KEY_WAL_CHECKPOINT_DATA(db));
 
 	int result = SQLITE_OK;
 
@@ -1334,7 +1384,7 @@ FUNC( l_sqlite3_commit_hook )
 
 	int (*xcommit)(void *);
 
-	if ( checknilornoneorfunc(L, 1) )
+	if ( checknilornoneorfunc(L, 2) )
 		xcommit = xcommit_callback_wrapper;
 	else
 		xcommit = 0;
@@ -1346,6 +1396,108 @@ FUNC( l_sqlite3_commit_hook )
 	return 1;
 }
 
+
+int xwal_page_callback_wrapper(void * cb_data, const char *pContent, int len, unsigned int pgno, unsigned int nTruncate, int isCommit)
+{
+	DB *		db = CB_DATA(cb_data)->db;
+	lua_State *	L  = db->L;
+
+	push_callback(L, db, KEY_XWAL_PAGE(cb_data));
+	lua_pushlstring(L, pContent, len);
+	lua_pushnumber(L, pgno);
+	lua_pushnumber(L, nTruncate);
+	lua_pushnumber(L, isCommit);
+
+	if ( lua_pcall(L, 4, 1, 0) )
+	{
+		lua_pop(L, 1);
+		return 1;		/* on errors, rollback */
+	}
+
+	return pop_break_condition(L);
+}
+
+FUNC( l_sqlite3_wal_page_hook )
+{
+	DB * db = checkdb(L, 1);
+	CB_Data * cb_data = get_wal_page_cb_data(L, db);
+
+	int (*xwal_page)(void *, const char *, int, unsigned int, unsigned int, int);
+
+	if ( checknilornoneorfunc(L, 2) )
+		xwal_page = xwal_page_callback_wrapper;
+	else
+		xwal_page = 0;
+
+	register_callback(L, db, KEY_XWAL_PAGE(cb_data), 2);
+	sqlite3_wal_page_hook(db->GetSqlite3(), xwal_page, cb_data);
+
+	lua_pushnumber(L, sqlite3_errcode(db->GetSqlite3()) );
+	return 1;
+}
+
+
+FUNC( l_sqlite3_wal_inject_page )
+{
+	DB * db = checkdb(L, 1);
+
+	const char *pData 	= checkstr(L, 2);
+	lua_Number pgno 	= checknumber(L, 3);
+	lua_Number nTruncate 	= checknumber(L, 4);
+	int isCommit 	= checkint(L, 5);
+
+	lua_pushnumber(L, sqlite3_wal_inject_page(db->GetSqlite3(), pData, pgno, nTruncate, isCommit));
+	
+	return 1;
+}
+
+
+
+int xwal_checkpoint_callback_wrapper(void * cb_data)
+{
+	DB *		db = CB_DATA(cb_data)->db;
+	lua_State *	L  = db->L;
+
+	push_callback(L, db, KEY_XWAL_CHECKPOINT(cb_data));
+
+	if ( lua_pcall(L, 0, 1, 0) )
+	{
+		lua_pop(L, 1);
+		return 1;		/* on errors, rollback */
+	}
+
+	return pop_break_condition(L);
+}
+
+FUNC( l_sqlite3_wal_checkpoint_hook )
+{
+	DB * db = checkdb(L, 1);
+	CB_Data * cb_data = get_wal_checkpoint_cb_data(L, db);
+
+	int (*xwal_checkpoint)(void *);
+
+	if ( checknilornoneorfunc(L, 2) )
+		xwal_checkpoint = xwal_checkpoint_callback_wrapper;
+	else
+		xwal_checkpoint = 0;
+
+	register_callback(L, db, KEY_XWAL_CHECKPOINT(cb_data), 2);
+	sqlite3_wal_checkpoint_hook(db->GetSqlite3(), xwal_checkpoint, cb_data);
+
+	lua_pushnumber(L, sqlite3_errcode(db->GetSqlite3()) );
+	return 1;
+}
+
+FUNC( l_sqlite3_wal_checkpoint )
+{
+	DB * db = checkdb(L, 1);
+
+	const char *zDb 	= checkstr(L, 2);
+
+	lua_pushnumber(L, sqlite3_wal_checkpoint(db->GetSqlite3(), zDb));
+	
+	return 1;
+}
 
 int xprogress_callback_wrapper(void * cb_data)
 {
@@ -1371,7 +1523,7 @@ FUNC( l_sqlite3_progress_handler )
 
 	int (*xprogress)(void *);
 
-	if ( checknilornoneorfunc(L, 1) )
+	if ( checknilornoneorfunc(L, 3) )
 		xprogress = xprogress_callback_wrapper;
 	else
 		xprogress = 0;
@@ -1468,6 +1620,171 @@ FUNC( l_sqlite3_set_authorizer )
 }
 
 
+// add for backup
+static const char *sqlite_bu_meta   = ":sqlite3:bu";
+
+// static sdb *lsqlite_getdb(lua_State *L, int index) {
+//     sdb *db = (sdb*)luaL_checkudata(L, index, sqlite_meta);
+//     if (db == NULL) luaL_typerror(L, index, "sqlite database");
+//     return db;
+// }
+
+// static sdb *lsqlite_checkdb(lua_State *L, int index) {
+//     sdb *db = lsqlite_getdb(L, index);
+//     if (db->db == NULL) luaL_argerror(L, index, "attempt to use closed sqlite database");
+//     return db;
+// }
+
+static void create_meta(lua_State *L, const char *name, const luaL_Reg *lib) {
+    luaL_newmetatable(L, name);
+    lua_pushstring(L, "__index");
+    lua_pushvalue(L, -2);               /* push metatable */
+    lua_rawset(L, -3);                  /* metatable.__index = metatable */
+
+    /* register metatable functions */
+    luaL_openlib(L, NULL, lib, 0);
+
+    /* remove metatable from stack */
+    lua_pop(L, 1);
+}
+
+struct sdb_bu {
+    sqlite3_backup *bu;     /* backup structure */
+};
+
+/* Online Backup API */
+#if 0
+sqlite3_backup *sqlite3_backup_init(
+  sqlite3 *pDest,                        /* Destination database handle */
+  const char *zDestName,                 /* Destination database name */
+  sqlite3 *pSource,                      /* Source database handle */
+  const char *zSourceName                /* Source database name */
+);
+int sqlite3_backup_step(sqlite3_backup *p, int nPage);
+int sqlite3_backup_finish(sqlite3_backup *p);
+int sqlite3_backup_remaining(sqlite3_backup *p);
+int sqlite3_backup_pagecount(sqlite3_backup *p);
+#endif
+
+static int cleanupbu(lua_State *L, sdb_bu *sbu) {
+
+    if (!sbu->bu) return 0; /* already finished */
+
+    /* remove table from registry */
+    lua_pushlightuserdata(L, sbu->bu);
+    lua_pushnil(L);
+    lua_rawset(L, LUA_REGISTRYINDEX);
+
+    lua_pushinteger(L, sqlite3_backup_finish(sbu->bu));
+    sbu->bu = NULL;
+
+    return 1;
+}
+
+static int l_sqlite3_backup_init(lua_State *L) {
+
+    // sdb *target_db = lsqlite_checkdb(L, 1);
+    sqlite3 *target_db = checkdb_sqlite3(L, 1);
+    const char *target_nm = luaL_checkstring(L, 2);
+    // sdb *source_db = lsqlite_checkdb(L, 3);
+    sqlite3 *source_db = checkdb_sqlite3(L, 3);
+    const char *source_nm = luaL_checkstring(L, 4);
+
+    sqlite3_backup *bu = sqlite3_backup_init(target_db, target_nm, source_db, source_nm);
+
+    if (NULL != bu) {
+        sdb_bu *sbu = (sdb_bu*)lua_newuserdata(L, sizeof(sdb_bu));
+
+        luaL_getmetatable(L, sqlite_bu_meta);
+        lua_setmetatable(L, -2);        /* set metatable */
+        sbu->bu = bu;
+
+        /* create table from registry */
+        /* to prevent referenced databases from being garbage collected while bu is live */
+        lua_pushlightuserdata(L, bu);
+        lua_createtable(L, 2, 0);
+        /* add source and target dbs to table at indices 1 and 2 */
+        lua_pushvalue(L, 1); /* target db */
+        lua_rawseti(L, -2, 1);
+        lua_pushvalue(L, 3); /* source db */
+        lua_rawseti(L, -2, 2);
+        /* put table in registry with key lightuserdata bu */
+        lua_rawset(L, LUA_REGISTRYINDEX);
+
+        return 1;
+    }
+    else {
+        return 0;
+    }
+}
+
+static sdb_bu *lsqlite_getbu(lua_State *L, int index) {
+    sdb_bu *sbu = (sdb_bu*)luaL_checkudata(L, index, sqlite_bu_meta);
+    if (sbu == NULL) luaL_typerror(L, index, "sqlite database backup");
+    return sbu;
+}
+
+static sdb_bu *lsqlite_checkbu(lua_State *L, int index) {
+    sdb_bu *sbu = lsqlite_getbu(L, index);
+    if (sbu->bu == NULL) luaL_argerror(L, index, "attempt to use closed sqlite database backup");
+    return sbu;
+}
+
+static int dbbu_gc(lua_State *L) {
+    sdb_bu *sbu = lsqlite_getbu(L, 1);
+    if (sbu->bu != NULL) {
+        cleanupbu(L, sbu);
+        lua_pop(L, 1);
+    }
+    /* else ignore if already finished */
+    return 0;
+}
+
+static int dbbu_step(lua_State *L) {
+    sdb_bu *sbu = lsqlite_checkbu(L, 1);
+    int nPage = luaL_checkint(L, 2);
+    lua_pushinteger(L, sqlite3_backup_step(sbu->bu, nPage));
+    return 1;
+}
+
+static int dbbu_remaining(lua_State *L) {
+    sdb_bu *sbu = lsqlite_checkbu(L, 1);
+    lua_pushinteger(L, sqlite3_backup_remaining(sbu->bu));
+    return 1;
+}
+
+static int dbbu_pagecount(lua_State *L) {
+    sdb_bu *sbu = lsqlite_checkbu(L, 1);
+    lua_pushinteger(L, sqlite3_backup_pagecount(sbu->bu));
+    return 1;
+}
+
+static int dbbu_finish(lua_State *L) {
+    sdb_bu *sbu = lsqlite_checkbu(L, 1);
+    return cleanupbu(L, sbu);
+}
+
+/* end of Online Backup API */
+
+
+
+static const luaL_Reg dbbulib[] = {
+
+    {"step",        dbbu_step       },
+    {"remaining",   dbbu_remaining  },
+    {"pagecount",   dbbu_pagecount  },
+    {"finish",      dbbu_finish     },
+
+//  {"__tostring",  dbbu_tostring   },
+    {"__gc",        dbbu_gc         },
+    {NULL, NULL}
+};
+
+
+// FUNC(l_sqlite3_backup_init)
+
+///
+
 typedef struct { const char * name; int (*func)(lua_State *); } f_entry;
 typedef struct { const char * name; int value; } d_entry;
 
@@ -1501,6 +1818,7 @@ static void d(lua_State * L, d_entry entries[])
 
 
 f_entry api_entries[] = {
+	{ "backup_init",	l_sqlite3_backup_init },
 	{ "bind_null",		l_sqlite3_bind_null },
 	{ "bind_text",		l_sqlite3_bind_text },
 	{ "bind_blob",		l_sqlite3_bind_blob },
@@ -1561,6 +1879,10 @@ f_entry api_entries[] = {
 	{ "value_type",		l_sqlite3_value_type },
 	{ "libversion",		l_sqlite3_libversion },
 	{ "commit_hook",		l_sqlite3_commit_hook },
+	{ "wal_page_hook",		l_sqlite3_wal_page_hook },
+	{ "wal_inject_page",		l_sqlite3_wal_inject_page },
+	{ "wal_checkpoint_hook",		l_sqlite3_wal_checkpoint_hook },
+	{ "wal_checkpoint",		l_sqlite3_wal_checkpoint },
 	{ "progress_handler",		l_sqlite3_progress_handler },
 	{ "busy_handler",		l_sqlite3_busy_handler },
 	{ "set_authorizer",		l_sqlite3_set_authorizer },
@@ -1650,6 +1972,8 @@ namespace ParaScripting
 {
 	int luaopen_sqlite3(lua_State * L)
 	{
+		create_meta(L, sqlite_bu_meta, dbbulib);
+
 		f(L, api_entries);
 		d(L, error_entries);
 		d(L, type_entries);

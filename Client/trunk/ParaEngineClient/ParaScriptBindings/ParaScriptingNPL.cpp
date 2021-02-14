@@ -21,6 +21,7 @@ using namespace luabind;
 #include "NPLHelper.h"
 #include "NPLCompiler.h"
 #include "ParaScriptingNPL.h"
+#include "ParaScriptingGlobal.h"
 #ifdef PARAENGINE_CLIENT
 #include "EditorHelper.h"
 #endif
@@ -42,11 +43,69 @@ using namespace luabind;
 #include "EventsCenter.h"
 #include "NPLHelper.h"
 #include "ParaScriptingIO.h"
+#include "zlib.h"
 
 #include "memdebug.h"
 
+/**@def CHUNK is simply the buffer size for feeding data to and pulling data from the zlib routines.
+Larger buffer sizes would be more efficient, especially for inflate(). If the memory is available,
+buffers sizes on the order of 128K or 256K bytes should be used. */
+#define NPL_ZLIB_CHUNK 32768
+
 namespace ParaScripting
 {
+
+	// only used in NPL::GetStats
+	struct NPL_GetNidsStr_Iterator : public NPL::CNPLConnectionManager::NPLConnectionCallBack
+	{
+	public:
+		NPL_GetNidsStr_Iterator() { m_nids_str.reserve(500); }
+
+		virtual int DoCallBack(const NPL::NPLConnection_ptr& c)
+		{
+			if (c->IsAuthenticated())
+			{
+				const std::string& sNid = c->GetNID();
+				if (!sNid.empty())
+				{
+					m_nids_str += sNid;
+					m_nids_str += ",";
+				}
+			}
+			return 0;
+		};
+		const std::string& ToString() { return m_nids_str; }
+
+	private:
+		std::string m_nids_str;
+	};
+
+	// only used in NPL::GetStats
+	struct NPL_GetNidsArray_Iterator : public NPL::CNPLConnectionManager::NPLConnectionCallBack
+	{
+	public:
+		NPL_GetNidsArray_Iterator(luabind::object& nids_array) :m_nids_array(nids_array), m_nCount(0) {}
+
+		virtual int DoCallBack(const NPL::NPLConnection_ptr& c)
+		{
+			if (c->IsAuthenticated())
+			{
+				const std::string& sNid = c->GetNID();
+				if (!sNid.empty())
+				{
+					++m_nCount;
+					m_nids_array[m_nCount] = sNid;
+				}
+			}
+			return 0;
+		};
+
+		luabind::object& GetNidArray() { return m_nids_array; }
+	private:
+		luabind::object& m_nids_array;
+		int m_nCount;
+	};
+
 	//////////////////////////////////////////////////////////////////////////
 	//
 	// NPL 
@@ -162,7 +221,7 @@ namespace ParaScripting
 		{
 			NPL::NPLFileName filename(sNPLFileName);
 			
-			runtime_state->LoadFile_any(filename.sRelativePath, false);
+			runtime_state->LoadFile_any(filename.sRelativePath, false, strNPLFileName.interpreter(), true);
 			runtime_state->ActivateFile_any(filename.sRelativePath, sCode.c_str(), (int)sCode.size());
 		}
 	}
@@ -258,7 +317,7 @@ namespace ParaScripting
 			if(nType == LUA_TSTRING)
 			{
 				NPL::NPLFileName filename(object_cast<const char*>(filePath));
-				runtime_state->LoadFile_any(filename.sRelativePath, bReload);
+				runtime_state->LoadFile_any(filename.sRelativePath, bReload, filePath.interpreter());
 			}
 		}
 	}
@@ -273,7 +332,27 @@ namespace ParaScripting
 		CNPL::load(filePath, false);
 	}
 
-	void CNPL::EnableNetwork( bool bEnable, const char* CenterName, const char* password )
+	int CNPL::export_(lua_State* L)
+	{
+		NPL::NPLRuntimeState_ptr runtime_state = NPL::CNPLRuntimeState::GetRuntimeStateFromLuaState(L);
+		if (runtime_state.get() != 0)
+		{
+			return runtime_state->NPL_export(L);
+		}
+		return 0;
+	}
+
+	const char* CNPL::GetFileName(lua_State* L)
+	{
+		NPL::NPLRuntimeState_ptr runtime_state = NPL::CNPLRuntimeState::GetRuntimeStateFromLuaState(L);
+		if (runtime_state.get() != 0)
+		{
+			return runtime_state->GetCurrentFileName(L);
+		}
+		return 0;
+	}
+
+	void CNPL::EnableNetwork(bool bEnable, const char* CenterName, const char* password)
 	{
 		NPL::CNPLRuntime::GetInstance()->NPL_EnableNetwork(bEnable, CenterName, password);
 	}
@@ -358,20 +437,25 @@ namespace ParaScripting
 		NPL::CNPLRuntime::GetInstance()->GetMainRuntimeState()->DoString(sCode, (int)strlen(sCode));
 	}
 
-	const string& CNPL::SerializeToSCode(const char* sStorageVar, const object& input)
+	const string& CNPL::SerializeToSCode2(const char* sStorageVar, const object& input, bool sort)
 	{
 		NPL::NPLRuntimeState_ptr runtime_state = NPL::CNPLRuntimeState::GetRuntimeStateFromLuaObject(input);
-		if(runtime_state.get() != 0)
+		if (runtime_state.get() != 0)
 		{
 			std::string& sCode = runtime_state->GetStringBuffer(0);
 			sCode.clear();
-			NPL::NPLHelper::SerializeToSCode(sStorageVar, input, sCode);
+			NPL::NPLHelper::SerializeToSCode(sStorageVar, input, sCode, 0, nullptr, sort);
 			return sCode;
 		}
 		else
 		{
 			return CGlobals::GetString();
 		}
+	}
+
+	const string& CNPL::SerializeToSCode(const char* sStorageVar, const object& input)
+	{
+		return SerializeToSCode2(sStorageVar, input, false);
 	}
 
 	bool CNPL::IsSCodePureData( const char* sCode )
@@ -435,12 +519,6 @@ namespace ParaScripting
 		NPL::CNPLRuntime::GetInstance()->NPL_UnregisterWSCallBack(sWebServiceFile);
 	}
 
-	const char* CNPL::GetFileName()
-	{
-		// TODO:: 
-		return NPL::CNPLRuntime::GetInstance()->GetMainRuntimeState()->GetFileName().c_str();
-	}
-
 	void CNPL::AsyncDownload( const char* url, const char* destFolder, const char* callbackScript, const char* DownloaderName )
 	{
 		NPL::CNPLRuntime::GetInstance()->AsyncDownload(url, destFolder, callbackScript, DownloaderName);
@@ -479,6 +557,7 @@ namespace ParaScripting
 
 	bool CNPL::AppendURLRequest1(const object&  urlParams, const char* sCallback, const object& sForm_, const char* sPoolName)
 	{
+		bool bSyncMode = sPoolName && strcmp(sPoolName, "self") == 0;
 		const char* url = NULL;
 		if (type(urlParams) == LUA_TTABLE)
 		{
@@ -551,10 +630,24 @@ namespace ParaScripting
 					}
 				}
 			}
-			auto sForm_ = urlParams["form"];
-			if (type(sForm_) == LUA_TTABLE)
+			auto postfields = urlParams["postfields"];
+			if (type(postfields) == LUA_TSTRING)
 			{
-				sForm = sForm_;
+				std::string request_body = object_cast<std::string>(postfields);
+				pProcessor->CopyRequestData(request_body.c_str(), request_body.size());
+			}
+			else
+			{
+				auto sForm_ = urlParams["form"];
+				if (type(sForm_) == LUA_TTABLE)
+				{
+					sForm = sForm_;
+				}
+			}
+			auto options = urlParams["options"];
+			if (type(options) == LUA_TTABLE)
+			{
+				NPL::NPLHelper::LuaObjectToNPLObject(options, pProcessor->GetOptions());
 			}
 		}
 
@@ -715,7 +808,34 @@ namespace ParaScripting
 		pProcessor->SetUrl(urlBuilder.ToString().c_str());
 		pProcessor->SetScriptCallback(sCallback);
 
-		return (pAsyncLoader->AddWorkItem( pLoader, pProcessor, NULL, NULL,ResourceRequestID_Web) == S_OK);
+		if (bSyncMode)
+		{
+			pProcessor->SetSyncCallbackMode(true);
+			// sync mode in current thread. 
+			if (SUCCEEDED(pLoader->Load()) &&
+				SUCCEEDED(pLoader->Decompress(NULL, NULL)) &&
+				SUCCEEDED(pProcessor->Process(NULL, NULL)) &&
+				SUCCEEDED(pProcessor->LockDeviceObject()) &&
+				SUCCEEDED(pProcessor->CopyToResource()) &&
+				SUCCEEDED(pProcessor->UnLockDeviceObject()))
+			{
+			}
+			else
+			{
+				pProcessor->SetResourceError();
+			}
+			pProcessor->Destroy();
+			pLoader->Destroy();
+
+			SAFE_DELETE(pLoader);
+			SAFE_DELETE(pProcessor);
+			return true;
+		}
+		else
+		{
+			// async mode. 
+			return (pAsyncLoader->AddWorkItem(pLoader, pProcessor, NULL, NULL, ResourceRequestID_Web) == S_OK);
+		}
 	}
 
 	string CNPL::EncodeURLQuery( const char * baseUrl, const object& sParams )
@@ -1075,7 +1195,7 @@ namespace ParaScripting
 #endif
 	bool CNPL::FromJson( const char* sJson, const object& output )
 	{
-		if(sJson == NULL || type(output) != LUA_TTABLE )
+		if (sJson == NULL || sJson[0] == '\0' || type(output) != LUA_TTABLE)
 			return false;
 		try
 		{
@@ -1122,6 +1242,236 @@ namespace ParaScripting
 			return false;
 		}
 		return true;
+	}
+
+
+	const string& CNPL::ToJson2(const object& input, bool bUseEmptyArray)
+	{
+		NPL::NPLRuntimeState_ptr runtime_state = NPL::CNPLRuntimeState::GetRuntimeStateFromLuaObject(input);
+		if (runtime_state.get() != 0)
+		{
+			std::string& sCode = runtime_state->GetStringBuffer(0);
+			sCode.clear();
+			NPL::NPLHelper::SerializeToJson(input, sCode, 0, NULL, bUseEmptyArray);
+			return sCode;
+		}
+		else
+		{
+			return CGlobals::GetString();
+		}
+	}
+
+	const string& CNPL::ToJson(const object& output)
+	{
+		return ToJson2(output, false);
+	}
+
+	bool CNPL::Compress(const object& output)
+	{
+		if (type(output) == LUA_TTABLE)
+		{
+			std::string sMethod, content, outstring;
+			NPL::NPLHelper::LuaObjectToString(output["method"], sMethod);
+			NPL::NPLHelper::LuaObjectToString(output["content"], content);
+
+			int windowBits = 15;
+			if (type(output["windowBits"]) == LUA_TNUMBER)
+			{
+				windowBits = object_cast<int>(output["windowBits"]);
+			}
+			int compressionlevel = Z_DEFAULT_COMPRESSION;
+			if (type(output["level"]) == LUA_TNUMBER)
+			{
+				compressionlevel = object_cast<int>(output["level"]);
+			}
+			
+
+			if (content.empty())
+				return false;
+			if (sMethod == "zlib")
+			{
+				z_stream zs;
+				memset(&zs, 0, sizeof(z_stream));
+
+				if (deflateInit2(&zs, compressionlevel, Z_DEFLATED, windowBits, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+				{
+					OUTPUT_LOG("warning: NPL::Compress deflateInit failed while compressing.\n");
+					return false;
+				}
+
+				zs.next_in = (Bytef*)content.c_str();
+				// set the z_stream's input
+				zs.avail_in = (int)content.size();
+
+				int ret;
+				char outbuffer[NPL_ZLIB_CHUNK];
+				// retrieve the compressed bytes blockwise
+				do {
+					zs.next_out = reinterpret_cast<Bytef*>(outbuffer);
+					zs.avail_out = sizeof(outbuffer);
+
+					ret = deflate(&zs, Z_FINISH);
+
+					if (outstring.size() < zs.total_out) {
+						// append the block to the output string
+						outstring.append(outbuffer,
+							zs.total_out - outstring.size());
+					}
+				} while (ret == Z_OK);
+
+				deflateEnd(&zs);
+
+				if (ret != Z_STREAM_END) {
+					OUTPUT_LOG("warning: NPL::Compress failed an error occurred that was not EOF.\n");
+					return false;
+				}
+				output["result"] = outstring;
+				return true;
+			}
+			else if (sMethod == "gzip")
+			{
+				z_stream zs;
+				memset(&zs, 0, sizeof(z_stream));
+
+				windowBits = (windowBits > 0) ? (windowBits + 16) : (windowBits - 16);
+
+				if (deflateInit2(&zs, compressionlevel, Z_DEFLATED, windowBits, 8, Z_DEFAULT_STRATEGY) != Z_OK)
+				{
+					OUTPUT_LOG("warning: NPL::Compress deflateInit failed while compressing.\n");
+					return false;
+				}
+
+				zs.next_in = (Bytef*)content.c_str();
+				// set the z_stream's input
+				zs.avail_in = (int)content.size();
+
+				int ret;
+				char outbuffer[NPL_ZLIB_CHUNK];
+				// retrieve the compressed bytes blockwise
+				do {
+					zs.next_out = reinterpret_cast<Bytef*>(outbuffer);
+					zs.avail_out = sizeof(outbuffer);
+
+					ret = deflate(&zs, Z_FINISH);
+
+					if (outstring.size() < zs.total_out) {
+						// append the block to the output string
+						outstring.append(outbuffer,
+							zs.total_out - outstring.size());
+					}
+				} while (ret == Z_OK);
+
+				deflateEnd(&zs);
+
+				if (ret != Z_STREAM_END) {
+					OUTPUT_LOG("warning: NPL::Compress failed an error occurred that was not EOF.\n");
+					return false;
+				}
+				output["result"] = outstring;
+				return true;
+			}
+		}
+		return false;
+	}
+
+	bool CNPL::Decompress(const object& output)
+	{
+		if (type(output) == LUA_TTABLE)
+		{
+			std::string sMethod, content, outstring;
+			NPL::NPLHelper::LuaObjectToString(output["method"], sMethod);
+			NPL::NPLHelper::LuaObjectToString(output["content"], content);
+
+			int windowBits = 15;
+			if (type(output["windowBits"]) == LUA_TNUMBER)
+			{
+				windowBits = object_cast<int>(output["windowBits"]);
+			}
+
+			if (sMethod == "zlib")
+			{
+				z_stream zs;
+				memset(&zs, 0, sizeof(zs));
+
+				if (inflateInit2(&zs, windowBits) != Z_OK)
+				{
+					OUTPUT_LOG("warning: NPL::Decompress inflateInit failed while decompressing.\n");
+					return false;
+				}
+
+				zs.next_in = (Bytef*)content.c_str();
+				zs.avail_in = (int)content.size();
+
+				int ret;
+				char outbuffer[NPL_ZLIB_CHUNK];
+
+				// get the decompressed bytes blockwise using repeated calls to inflate
+				do {
+					zs.next_out = reinterpret_cast<Bytef*>(outbuffer);
+					zs.avail_out = sizeof(outbuffer);
+
+					ret = inflate(&zs, 0);
+
+					if (outstring.size() < zs.total_out) {
+						outstring.append(outbuffer,
+							zs.total_out - outstring.size());
+					}
+
+				} while (ret == Z_OK);
+
+				inflateEnd(&zs);
+
+				if (ret != Z_STREAM_END) {
+					OUTPUT_LOG("warning: NPL::Decompress inflateInit an error occurred that was not EOF\n");
+					return false;
+				}
+				output["result"] = outstring;
+				return true;
+			}
+			else if (sMethod == "gzip")
+			{
+				z_stream zs;
+				memset(&zs, 0, sizeof(zs));
+
+				windowBits = (windowBits > 0) ? (windowBits + 16) : (windowBits - 16);
+
+				if (inflateInit2(&zs, windowBits) != Z_OK)
+				{
+					OUTPUT_LOG("warning: NPL::Decompress inflateInit failed while decompressing.\n");
+					return false;
+				}
+
+				zs.next_in = (Bytef*)content.c_str();
+				zs.avail_in = (int)content.size();
+
+				int ret;
+				char outbuffer[NPL_ZLIB_CHUNK];
+
+				// get the decompressed bytes blockwise using repeated calls to inflate
+				do {
+					zs.next_out = reinterpret_cast<Bytef*>(outbuffer);
+					zs.avail_out = sizeof(outbuffer);
+
+					ret = inflate(&zs, 0);
+
+					if (outstring.size() < zs.total_out) {
+						outstring.append(outbuffer,
+							zs.total_out - outstring.size());
+					}
+
+				} while (ret == Z_OK);
+
+				inflateEnd(&zs);
+
+				if (ret != Z_STREAM_END) {
+					OUTPUT_LOG("warning: NPL::Decompress inflateInit an error occurred that was not EOF\n");
+					return false;
+				}
+				output["result"] = outstring;
+				return true;
+			}
+		}
+		return false;
 	}
 
 	luabind::object CNPL::LoadTableFromString(const object& input)
@@ -1264,6 +1614,12 @@ namespace ParaScripting
 		NPL::CNPLRuntime::GetInstance()->NPL_accept(tid, nid);
 	}
 
+	void CNPL::SetProtocol(const char* nid, int protocolType)
+	{
+		NPL::CNPLRuntime::GetInstance()->NPL_SetProtocol(nid, protocolType);
+
+	}
+
 	void CNPL::reject(const object& nid)
 	{
 		const char * sNID = NULL;
@@ -1310,94 +1666,10 @@ namespace ParaScripting
 		}
 	}
 
-	// only used in NPL::GetStats
-	struct NPL_GetNidsStr_Iterator : public NPL::CNPLConnectionManager::NPLConnectionCallBack
-	{
-	public:
-		NPL_GetNidsStr_Iterator(){m_nids_str.reserve(500);}
-
-		virtual int DoCallBack(const NPL::NPLConnection_ptr& c) 
-		{
-			if(c->IsAuthenticated())
-			{
-				const std::string& sNid = c->GetNID();
-				if(!sNid.empty())
-				{
-					m_nids_str += sNid;
-					m_nids_str += ",";
-				}
-			}
-			return 0;
-		};
-		const std::string& ToString() {return m_nids_str;}
-
-	private:
-		std::string m_nids_str;
-	};
-
-	// only used in NPL::GetStats
-	struct NPL_GetNidsArray_Iterator : public NPL::CNPLConnectionManager::NPLConnectionCallBack
-	{
-	public:
-		NPL_GetNidsArray_Iterator(luabind::object& nids_array):m_nids_array(nids_array), m_nCount(0){}
-
-		virtual int DoCallBack(const NPL::NPLConnection_ptr& c) 
-		{
-			if(c->IsAuthenticated())
-			{
-				const std::string& sNid = c->GetNID();
-				if(!sNid.empty())
-				{
-					++ m_nCount;
-					m_nids_array[m_nCount] = sNid;
-				}
-			}
-			return 0;
-		};
-
-		luabind::object& GetNidArray() {return m_nids_array;}
-	private:
-		luabind::object& m_nids_array;
-		int m_nCount;
-	};
-
 	luabind::object CNPL::GetStats(const object& input)
 	{
-		int nType = type(input);
-		luabind::object output = luabind::newtable(input.interpreter());
-
-		if(nType == LUA_TTABLE)
-		{
-			for (luabind::iterator itCur(input), itEnd; itCur!=itEnd; ++itCur)
-			{
-				// we only serialize item with a string key
-				const object& key = itCur.key();
-				if(type(key) == LUA_TSTRING)
-				{
-					std::string sFieldName = object_cast<const char*>(key);
-					if(sFieldName == "connection_count")
-					{
-						int nConnCount = CGlobals::GetNPLRuntime()->GetNetServer()->GetConnectionManager().get_connection_count();
-						output[sFieldName] = nConnCount;
-					}
-					else if(sFieldName == "nids_str")
-					{
-						NPL_GetNidsStr_Iterator iter;
-						int nConnCount = CGlobals::GetNPLRuntime()->GetNetServer()->GetConnectionManager().ForEachConnection(&iter);
-						output[sFieldName] = iter.ToString();
-					}
-					else if(sFieldName == "nids")
-					{
-						luabind::object nids_array = luabind::newtable(input.interpreter());
-						NPL_GetNidsArray_Iterator iter(nids_array);
-						int nConnCount = CGlobals::GetNPLRuntime()->GetNetServer()->GetConnectionManager().ForEachConnection(&iter);
-						output[sFieldName] = iter.GetNidArray();
-					}
-				}
-			}
-			
-		}
-		return output;
+		ParaNPLRuntimeState main_state(CGlobals::GetNPLRuntime()->GetMainRuntimeState());
+		return main_state.GetStats(input);
 	}
 
 #pragma region NPL Runtime State
@@ -1425,9 +1697,52 @@ namespace ParaScripting
 		return true;
 	}
 
-	luabind::object ParaNPLRuntimeState::GetStats( const object& inout )
+	luabind::object ParaNPLRuntimeState::GetStats( const object& input )
 	{
-		return object(inout);
+		int nType = type(input);
+		luabind::object output = luabind::newtable(input.interpreter());
+
+		if (nType == LUA_TTABLE)
+		{
+			for (luabind::iterator itCur(input), itEnd; itCur != itEnd; ++itCur)
+			{
+				// we only serialize item with a string key
+				const object& key = itCur.key();
+				if (type(key) == LUA_TSTRING)
+				{
+					std::string sFieldName = object_cast<const char*>(key);
+					if (sFieldName == "connection_count")
+					{
+						int nConnCount = CGlobals::GetNPLRuntime()->GetNetServer()->GetConnectionManager().get_connection_count();
+						output[sFieldName] = nConnCount;
+					}
+					else if (sFieldName == "nids_str")
+					{
+						NPL_GetNidsStr_Iterator iter;
+						int nConnCount = CGlobals::GetNPLRuntime()->GetNetServer()->GetConnectionManager().ForEachConnection(&iter);
+						output[sFieldName] = iter.ToString();
+					}
+					else if (sFieldName == "nids")
+					{
+						luabind::object nids_array = luabind::newtable(input.interpreter());
+						NPL_GetNidsArray_Iterator iter(nids_array);
+						int nConnCount = CGlobals::GetNPLRuntime()->GetNetServer()->GetConnectionManager().ForEachConnection(&iter);
+						output[sFieldName] = iter.GetNidArray();
+					}
+					else if (sFieldName == "loadedfiles")
+					{
+						luabind::object files_map = luabind::newtable(input.interpreter());
+						for(auto item : m_rts->GetLoadedFiles())
+						{
+							files_map[item.first] = item.second;
+						}
+						output[sFieldName] = files_map;
+					}
+				}
+			}
+
+		}
+		return output;
 	}
 
 	ParaNPLRuntimeState::ParaNPLRuntimeState()
@@ -1458,6 +1773,18 @@ namespace ParaScripting
 			return m_rts->GetName().c_str();
 		}
 		return NULL;
+	}
+
+	luabind::object ParaNPLRuntimeState::GetField(const char* sFieldname, const object& output)
+	{
+		ParaAttributeObject att(m_rts);
+		return att.GetField(sFieldname, output);
+	}
+
+	void ParaNPLRuntimeState::SetField(const char* sFieldname, const object& input)
+	{
+		ParaAttributeObject att(m_rts);
+		att.SetField(sFieldname, input);
 	}
 
 	void ParaNPLRuntimeState::Reset()
@@ -1515,6 +1842,14 @@ namespace ParaScripting
 		if (m_rts != 0)
 		{
 			m_rts->WaitForMessage();
+		}
+	}
+
+	void ParaNPLRuntimeState::WaitForMessage2(int nMessageCount)
+	{
+		if (m_rts != 0)
+		{
+			m_rts->WaitForMessage(nMessageCount);
 		}
 	}
 

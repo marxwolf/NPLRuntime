@@ -1,12 +1,13 @@
 #pragma once
 
-#if !defined(NPLRUNTIME) && (defined(USE_DIRECTX_RENDERER)  || defined(USE_OPENGL_RENDERER))
+#ifdef SUPPORT_FBX_MODEL_FILE
 
 #include "XFileParser.h"
 #include "ParaXModel.h"
 #include "modelheaders.h"
 #include "FBXModelInfo.h"
 #include "FBXMaterial.h"
+#include "NPLCommon.h"
 
 // assimp declare
 struct aiScene;
@@ -14,6 +15,7 @@ struct aiMesh;
 struct aiNode;
 struct aiBone;
 struct aiAnimation;
+struct aiMaterial;
 
 namespace ParaEngine
 {
@@ -72,10 +74,14 @@ namespace ParaEngine
 		void ProcessFBXBoneNodes(const aiScene* pFbxScene, aiNode* pFbxNode, int parentBoneIndex, CParaXModel *pMesh);
 		void ProcessFBXMesh(const aiScene* pFbxScene, aiMesh *pFbxMesh, aiNode* pFbxNode, CParaXModel *pMesh);
 		void ProcessFBXMaterial(const aiScene* pFbxScene, unsigned int iIndex, CParaXModel *pMesh);
+		void ParseUVAnimation(ModelRenderPass& pass, aiMaterial* pfbxMaterial, CParaXModel *pMesh);
+		void ParseParticleEmitter(ModelRenderPass& pass, aiMaterial* pfbxMaterial, CParaXModel *pMesh, const std::string& sMatName, int texture_index);
+		lua_State* ParseScriptString(const char* str);
+		void ParseParticleParam(ParticleSystem& ps, lua_State* L);
 		void ProcessFBXAnimation(const aiScene* pFbxScene, unsigned int iIndex, CParaXModel *pMesh);
 
-		void AddDefaultColors(CParaXModel *pMesh);
-		void AddDefaultTransparency(CParaXModel *pMesh);
+		void AddColors(CParaXModel *pMesh);
+		void AddTransparency(CParaXModel *pMesh);
 		void FillParaXModelData(CParaXModel *pMesh, const aiScene *pFbxScene);
 		void PostProcessParaXModelData(CParaXModel *pMesh);
 
@@ -102,16 +108,24 @@ namespace ParaEngine
 		vector<ParaEngine::Bone> m_bones;
 		vector<uint16> m_indices;
 		vector<FBXMaterial> m_textures;
+		vector<TextureAnim> m_texAnims;
+		std::map<std::string, ParticleSystem> m_particleSystem;
+		lua_State* m_pLuaState;
 		/** embedded texture filename and its binary data */
 		map<string, string> m_textureContentMapping;
+
 		vector<ModelAnimation> m_anims;
 		map<string, int> m_boneMapping;
 		asset_ptr<TextureEntity> *textures;
 		Vector3 m_maxExtent, m_minExtent;
 		int m_nRootNodeIndex;
 		int m_unique_id;
-		bool m_beUsedVertexColor;
+		bool m_bUsedVertexColor;
+		bool m_bHasSkinnedMesh;
 		std::string m_sAnimSplitterFilename;
+
+		vector<ModelColor> m_colors;
+		vector<ModelTransparency> m_transparencys;
 	};
 }
 

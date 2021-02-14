@@ -7,7 +7,7 @@
 //-----------------------------------------------------------------------------
 #include "ParaEngine.h"
 #ifdef USE_OPENGL_RENDERER
-#include "cocos2d.h"
+#include "OpenGLWrapper.h"
 #include "AutoCamera.h"
 #include "SceneObject.h"
 #include "ParaWorldAsset.h"
@@ -15,102 +15,13 @@
 #include "AutoCamera.h"
 #include "effect_file_OpenGL.h"
 #include "SunLight.h"
+#include "driver.h"
 using namespace ParaEngine;
-USING_NS_CC;
-// TODO: add more buildin shaders here
-#define STRINGIFY(A)  #A
-#include "shaders/blockEffect.shader"
-#include "shaders/blockSelectEffect.shader"
-#include "shaders/singleColorEffect.shader"
-#include "shaders/meshNormalEffect.shader"
-#include "shaders/particleEffect.shader"
-#include "shaders/guiEffect.shader"
-#include "shaders/guiTextEffect.shader"
-#include "shaders/skymeshEffect.shader"
-#include "shaders/skydomeEffect.shader"
-#include "shaders/terrainEffect.shader"
-#include "shaders/blockMaxEffect.shader"
-
-std::unordered_map<uint32, std::string> CEffectFileOpenGL::s_id_to_names = CEffectFileOpenGL::LoadStaticIdNameMap();
-
-std::unordered_map<uint32, std::string> CEffectFileOpenGL::LoadStaticIdNameMap()
-{
-	std::unordered_map<uint32, std::string> fields;
-	fields[k_worldMatrix] = "world";
-	fields[k_worldInverseMatrix] = "worldinverse";
-	fields[k_worldViewMatrix] = "worldview";
-	fields[k_worldViewProjMatrix] = "worldviewprojection";
-	fields[k_worldMatrixArray] = "worldmatrixarray";
-	fields[k_skyBoxMatrix] = "skyboxmatrix";
-	fields[k_viewMatrix] = "view";
-	fields[k_projMatrix] = "projection";
-	fields[k_viewProjMatrix] = "viewprojection";
-	fields[k_TexWorldViewProjMatrix] = "texworldviewproj";
-	fields[k_ambientMaterialColor] = "materialambient";
-	fields[k_diffuseMaterialColor] = "materialdiffuse";
-	fields[k_specularMaterialColor] = "materialspecular";
-	fields[k_emissiveMaterialColor] = "materialemissive";
-	fields[k_posScaleOffset] = "posScaleOffset";
-	fields[k_uvScaleOffset] = "uvScaleOffset";
-	fields[k_lensFlareColor] = "flareColor";
-	fields[k_fogParameters] = "fogparameters";
-	fields[k_fogColor] = "fogColor";
-	fields[k_shadowFactor] = "shadowfactor";
-	fields[k_LightStrength] = "LightStrength";
-	fields[k_LightColors] = "LightColors";
-	fields[k_LightPositions] = "LightPositions";
-	fields[k_fresnelR0] = "FresnelR0";
-	fields[k_ConstVector0] = "ConstVector0";
-	fields[k_ConstVector1] = "ConstVector1";
-	fields[k_ConstVector2] = "ConstVector2";
-	fields[k_ConstVector3] = "ConstVector3";
-	fields[k_sunVector] = "sunvector";
-	fields[k_sunColor] = "suncolor";
-	fields[k_cameraPos] = "worldcamerapos";
-	fields[k_cameraDistances] = "viewdistances";
-	fields[k_cameraFacing] = "worldviewvector";
-	fields[k_ambientLight] = "ambientlight";
-	fields[k_sunlightInscatter] = "sunlight_inscatter";
-	fields[k_sunlightExtinction] = "sunlight_extinction";
-	fields[k_worldPos] = "worldpos";
-	fields[k_texCoordOffset] = "texCoordOffset";
-	fields[k_boneInfluenceCount] = "curnumbones";
-	fields[k_fogEnable] = "fogenable";
-	fields[k_bAlphaTesting] = "alphatesting";
-	fields[k_bAlphaBlending] = "alphablending";
-	fields[k_bBoolean0] = "k_bBoolean0";
-	fields[k_bBoolean1] = "k_bBoolean1";
-	fields[k_bBoolean2] = "k_bBoolean2";
-	fields[k_bBoolean3] = "k_bBoolean3";
-	fields[k_bBoolean4] = "k_bBoolean4";
-	fields[k_bBoolean5] = "k_bBoolean5";
-	fields[k_bBoolean6] = "k_bBoolean6";
-	fields[k_bBoolean7] = "k_bBoolean7";
-	fields[k_bBoolean8] = "k_bBoolean8";
-	fields[k_bBoolean9] = "k_bBoolean9";
-	fields[k_bBoolean10] = "k_bBoolean10";
-	fields[k_bBoolean11] = "k_bBoolean11";
-	fields[k_bBoolean12] = "k_bBoolean12";
-	fields[k_bBoolean13] = "k_bBoolean13";
-	fields[k_bBoolean14] = "k_bBoolean14";
-	fields[k_bBoolean15] = "k_bBoolean15";
-	fields[k_bSunlightEnable] = "sunlightenable";
-	fields[k_nShadowmapSize] = "shadowmapsize";
-	fields[k_fShadowRadius] = "shadowradius";
-	fields[k_specularMaterialPower] = "materialpower";
-	fields[k_reflectFactor] = "reflectfactor";
-	fields[k_LocalLightNum] = "locallightnum";
-	fields[k_LayersNum] = "layersnum";
-	fields[k_time] = "time";
-	fields[k_opacity] = "opacity";
-	fields[k_specularPower] = "specularPower";
-	fields[k_transitionFactor] = "transitionFactor";
-	return fields;
-}
-
 
 ParaEngine::CEffectFileOpenGL::CEffectFileOpenGL(const char* filename)
 	: m_nActivePassIndex(0), m_bIsBegin(false), m_pendingChangesCount(0)
+	, mTechniqueIndex(0)
+	,m_Effect(nullptr)
 {
 	SetFileName(filename);
 	Init();
@@ -118,12 +29,19 @@ ParaEngine::CEffectFileOpenGL::CEffectFileOpenGL(const char* filename)
 
 ParaEngine::CEffectFileOpenGL::CEffectFileOpenGL(const AssetKey& key)
 	: m_nActivePassIndex(0), m_bIsBegin(false), m_pendingChangesCount(0)
+	, mTechniqueIndex(0)
+	, m_Effect(nullptr)
 {
 	Init();
 }
 
 ParaEngine::CEffectFileOpenGL::~CEffectFileOpenGL()
 {
+	if (m_Effect != nullptr)
+	{
+		delete m_Effect;
+		m_Effect = nullptr;
+	}
 	releaseEffect();
 }
 
@@ -145,10 +63,51 @@ const std::string& ParaEngine::CEffectFileOpenGL::GetFileName()
 HRESULT ParaEngine::CEffectFileOpenGL::InitDeviceObjects()
 {
 	m_bIsInitialized = true;
-	if (!LoadBuildinShader())
+	
+	// Load and parse effetcs.
+	CParaFile shaderFile(GetFileName().c_str());
+	std::string shader_str(shaderFile.getBuffer(), shaderFile.getSize());
+	m_Effect = new GLEffectsTree();
+	GLEFFECTS::Driver parseDriver(*m_Effect);
+	bool ret = parseDriver.parse_string(shader_str);
+	if (!ret)
 	{
-		OUTPUT_LOG("warning: unknown shader %s\n", GetFileName().c_str());
+		delete m_Effect;
+		m_Effect = nullptr;
+		OUTPUT_LOG("error: parse effect failed %s\n", GetFileName().c_str());
+		return false;
 	}
+
+	// Parse uniforms
+	
+	ret = MappingEffectUniforms();
+	if (ret) {
+		OUTPUT_LOG("[%s] Parse uniforms sucessed.\n", GetFileName().c_str());
+	}
+	else {
+		OUTPUT_LOG("[%s] Parse uniforms failed.\n", GetFileName().c_str());
+		return false;
+	}
+
+	// Init effect
+	ret = GeneratePasses();
+	if (ret) {
+		OUTPUT_LOG("[%s] Generate passes sucessed.\n", GetFileName().c_str());
+	}
+	else {
+		OUTPUT_LOG("[%s] Generate passes failed.\n", GetFileName().c_str());
+		return false;
+	}
+
+	if (m_filename == ":IDR_FX_SIMPLE_MESH_NORMAL")
+	{
+		SetFloat("opacity", 1.f);
+	}
+	if (m_filename == ":IDR_FX_GUI")
+	{
+		SetBool("k_bBoolean0", true);
+	}
+
 	return S_OK;
 }
 
@@ -159,22 +118,49 @@ HRESULT ParaEngine::CEffectFileOpenGL::DeleteDeviceObjects()
 	return S_OK;
 }
 
-void ParaEngine::CEffectFileOpenGL::releaseEffect(int nPass)
+void ParaEngine::CEffectFileOpenGL::releaseEffect(int nTech, int nPass)
 {
-	if (nPass < 0)
+	if (nTech < 0)
 	{
-		for (auto program : m_programs)
+		for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 		{
-			CC_SAFE_RELEASE_NULL(program);
+			auto & passes = mTechniques[tech_index].mPasses;
+			if (nPass < 0)
+			{
+				for (auto program : passes)
+				{
+					SAFE_RELEASE(program);
+				}
+				passes.clear();
+			}
+			else
+			{
+				auto program = GetGLProgram(tech_index, nPass);
+				if (program)
+				{
+					SAFE_RELEASE(passes[nPass]);
+				}
+			}
 		}
-		m_programs.clear();
 	}
-	else
+	else if ((int)mTechniques.size()>nTech)
 	{
-		auto program = GetGLProgram(nPass);
-		if (program)
+		auto & passes = mTechniques[nTech].mPasses;
+		if (nPass < 0)
 		{
-			CC_SAFE_RELEASE_NULL(m_programs[nPass]);
+			for (auto program : passes)
+			{
+				SAFE_RELEASE(program);
+			}
+			passes.clear();
+		}
+		else
+		{
+			auto program = GetGLProgram(nTech, nPass);
+			if (program)
+			{
+				SAFE_RELEASE(passes[nPass]);
+			}
 		}
 	}
 }
@@ -196,21 +182,25 @@ void ParaEngine::CEffectFileOpenGL::EnableSunLight(bool bEnableSunLight)
 
 bool ParaEngine::CEffectFileOpenGL::setMatrix(eParameterHandles index, const Matrix4* data)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
-	if (program && data!=0)
+	bool ret = false;
+	for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 	{
-		Uniform* uniform = GetUniformByID(index);
-		if (uniform)
+		auto program = GetGLProgram(tech_index, m_nActivePassIndex);
+		if (program && data != 0)
 		{
-			// transpose it, since openGL and directX packed matrix differently. 
-			// Xizhi 2014.9.16: for some reason, it does not need to be transposed, opengl already packed data in our way.  
-			// Matrix4 matTranposed = data->transpose();
-			program->setUniformLocationWithMatrix4fv(uniform->location, (const GLfloat*)(data), 1);
-			PE_CHECK_GL_ERROR_DEBUG();
-			return true;
+			Uniform* uniform = GetUniformByID(index);
+			if (uniform)
+			{
+				// transpose it, since openGL and directX packed matrix differently.
+				// Xizhi 2014.9.16: for some reason, it does not need to be transposed, opengl already packed data in our way.
+				// Matrix4 matTranposed = data->transpose();
+				program->setUniformLocationWithMatrix4fv(uniform->location, (const GLfloat*)(data), 1);
+				PE_CHECK_GL_ERROR_DEBUG();
+				ret = true;
+			}
 		}
 	}
-	return false;
+	return ret;
 }
 
 bool ParaEngine::CEffectFileOpenGL::isMatrixUsed(eParameterHandles index)
@@ -218,35 +208,64 @@ bool ParaEngine::CEffectFileOpenGL::isMatrixUsed(eParameterHandles index)
 	return isParameterUsed(index);
 }
 
-bool ParaEngine::CEffectFileOpenGL::setParameter(cocos2d::Uniform* uniform, const void* data, int32 size)
+bool ParaEngine::CEffectFileOpenGL::setParameter(GLWrapper::Uniform* uniform, const void* data, int32 size)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
-	if (uniform && program && data != 0)
+	bool ret = false;
+	for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 	{
-		if (uniform->type == GL_INT)
-			program->setUniformLocationWith1i(uniform->location, *((const GLint*)(data)));
-		else if (uniform->type == GL_BOOL)
-			program->setUniformLocationWith1i(uniform->location, *((const bool*)(data)));
-		else if (uniform->type == GL_FLOAT)
-			program->setUniformLocationWith1f(uniform->location, *((const GLfloat*)(data)));
-		else if (uniform->type == GL_FLOAT_VEC3)
-			program->setUniformLocationWith3fv(uniform->location, (const GLfloat*)(data), uniform->size);
-		else if (uniform->type == GL_FLOAT_VEC2)
-			program->setUniformLocationWith2fv(uniform->location, (const GLfloat*)(data), uniform->size);
-		else if (uniform->type == GL_FLOAT_VEC4)
-			program->setUniformLocationWith4fv(uniform->location, (const GLfloat*)(data), uniform->size);
-		else if (uniform->type == GL_FLOAT_MAT4)
-			program->setUniformLocationWithMatrix4fv(uniform->location, (const GLfloat*)(data), uniform->size);
-		else if (size > 0)
-			program->setUniformLocationWith2fv(uniform->location, (const GLfloat*)(data), (uint32)((size + 1) / 2));
-		else
+		auto program = GetGLProgram(tech_index, m_nActivePassIndex);
+		if (uniform && program && data != 0)
 		{
-			OUTPUT_LOG("warn: unknown uniform size and type\n");
+			if (uniform->type == GL_INT)
+			{
+				program->setUniformLocationWith1i(uniform->location, *((const GLint*)(data)));
+
+				PE_CHECK_GL_ERROR_DEBUG();
+			}
+			else if (uniform->type == GL_BOOL)
+			{
+				program->setUniformLocationWith1i(uniform->location, *((const bool*)(data)));
+				PE_CHECK_GL_ERROR_DEBUG();
+			}
+			else if (uniform->type == GL_FLOAT)
+			{
+				program->setUniformLocationWith1f(uniform->location, *((const GLfloat*)(data)));
+				PE_CHECK_GL_ERROR_DEBUG();
+			}
+			else if (uniform->type == GL_FLOAT_VEC3)
+			{
+				program->setUniformLocationWith3fv(uniform->location, (const GLfloat*)(data), uniform->size);
+				PE_CHECK_GL_ERROR_DEBUG();
+			}
+			else if (uniform->type == GL_FLOAT_VEC2)
+			{
+				program->setUniformLocationWith2fv(uniform->location, (const GLfloat*)(data), uniform->size);
+				PE_CHECK_GL_ERROR_DEBUG();
+			}
+			else if (uniform->type == GL_FLOAT_VEC4)
+			{
+				program->setUniformLocationWith4fv(uniform->location, (const GLfloat*)(data), uniform->size);
+				PE_CHECK_GL_ERROR_DEBUG();
+			}
+			else if (uniform->type == GL_FLOAT_MAT4)
+			{
+				program->setUniformLocationWithMatrix4fv(uniform->location, (const GLfloat*)(data), uniform->size);
+				PE_CHECK_GL_ERROR_DEBUG();
+			}
+			else if (size > 0)
+			{
+				program->setUniformLocationWith2fv(uniform->location, (const GLfloat*)(data), (uint32)((size + 1) / 2));
+				PE_CHECK_GL_ERROR_DEBUG();
+			}
+			else
+			{
+				OUTPUT_LOG("warn: unknown uniform size and type\n");
+			}
+			// PE_CHECK_GL_ERROR_DEBUG();
+			ret = true;
 		}
-		// PE_CHECK_GL_ERROR_DEBUG();
-		return true;
 	}
-	return true;
+	return ret;
 }
 
 bool ParaEngine::CEffectFileOpenGL::setParameter(eParameterHandles index, const void* data, int32 size /*= D3DX_DEFAULT*/)
@@ -256,79 +275,99 @@ bool ParaEngine::CEffectFileOpenGL::setParameter(eParameterHandles index, const 
 
 bool ParaEngine::CEffectFileOpenGL::setParameter(eParameterHandles index, const Vector2* data)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
-	if (program && data != 0)
+	bool ret = false;
+	for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 	{
-		Uniform* uniform = GetUniformByID(index);
-		if (uniform)
+		auto program = GetGLProgram(tech_index, m_nActivePassIndex);
+		if (program && data != 0)
 		{
-			program->setUniformLocationWith2fv(uniform->location, (const GLfloat*)(data), 1);
-			PE_CHECK_GL_ERROR_DEBUG();
-			return true;
+			auto uniform = GetUniformByID(index);
+			if (uniform)
+			{
+				program->setUniformLocationWith2fv(uniform->location, (const GLfloat*)(data), 1);
+				PE_CHECK_GL_ERROR_DEBUG();
+				ret = true;
+			}
 		}
 	}
-	return true;
+	return ret;
 }
 
 bool ParaEngine::CEffectFileOpenGL::setParameter(eParameterHandles index, const Vector3* data)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
-	if (program && data != 0)
+	bool ret = false;
+	for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 	{
-		Uniform* uniform = GetUniformByID(index);
-		if (uniform)
+		auto program = GetGLProgram(tech_index, m_nActivePassIndex);
+		if (program && data != 0)
 		{
-			program->setUniformLocationWith3fv(uniform->location, (const GLfloat*)(data), 1);
-			PE_CHECK_GL_ERROR_DEBUG();
-			return true;
+			auto uniform = GetUniformByID(index);
+			if (uniform)
+			{
+				program->setUniformLocationWith3fv(uniform->location, (const GLfloat*)(data), 1);
+				PE_CHECK_GL_ERROR_DEBUG();
+				ret = true;
+			}
 		}
 	}
-	return true;
+	return ret;
 }
 
 bool ParaEngine::CEffectFileOpenGL::setParameter(eParameterHandles index, const Vector4* data)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
-	if (program && data != 0)
+	bool ret = false;
+	for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 	{
-		Uniform* uniform = GetUniformByID(index);
-		if (uniform)
+		auto program = GetGLProgram(tech_index, m_nActivePassIndex);
+		if (program && data != 0)
 		{
-			program->setUniformLocationWith4fv(uniform->location, (const GLfloat*)(data), 1);
-			PE_CHECK_GL_ERROR_DEBUG();
-			return true;
+			auto uniform = GetUniformByID(index);
+			if (uniform)
+			{
+				program->setUniformLocationWith4fv(uniform->location, (const GLfloat*)(data), 1);
+				PE_CHECK_GL_ERROR_DEBUG();
+				ret = true;
+			}
 		}
 	}
-	return true;
+	return ret;
 }
 
 bool ParaEngine::CEffectFileOpenGL::setBool(eParameterHandles index, BOOL bBoolean)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
-	if (program)
+	bool ret = false;
+	for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 	{
-		Uniform* uniform = GetUniformByID(index);
-		if (uniform)
+		auto program = GetGLProgram(tech_index, m_nActivePassIndex);
+		if (program)
 		{
-			program->setUniformLocationWith1i(uniform->location, bBoolean ? 1 : 0);
-			PE_CHECK_GL_ERROR_DEBUG();
-			return true;
+			Uniform* uniform = GetUniformByID(index);
+			if (uniform)
+			{
+				program->setUniformLocationWith1i(uniform->location, bBoolean ? 1 : 0);
+				PE_CHECK_GL_ERROR_DEBUG();
+				ret = true;
+			}
 		}
 	}
-	return true;
+	return ret;
 }
 
 bool ParaEngine::CEffectFileOpenGL::setInt(eParameterHandles index, int nValue)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
-	if (program)
+	bool ret = false;
+	for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 	{
-		Uniform* uniform = GetUniformByID(index);
-		if (uniform)
+		auto program = GetGLProgram(tech_index, m_nActivePassIndex);
+		if (program)
 		{
-			program->setUniformLocationWith1i(uniform->location, nValue);
-			PE_CHECK_GL_ERROR_DEBUG();
-			return true;
+			Uniform* uniform = GetUniformByID(index);
+			if (uniform)
+			{
+				program->setUniformLocationWith1i(uniform->location, nValue);
+				PE_CHECK_GL_ERROR_DEBUG();
+				ret = true;
+			}
 		}
 	}
 	return true;
@@ -336,15 +375,19 @@ bool ParaEngine::CEffectFileOpenGL::setInt(eParameterHandles index, int nValue)
 
 bool ParaEngine::CEffectFileOpenGL::setFloat(eParameterHandles index, float fValue)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
-	if (program)
+	bool ret = false;
+	for (auto tech_index = 0; tech_index < (int)mTechniques.size(); ++tech_index)
 	{
-		Uniform* uniform = GetUniformByID(index);
-		if (uniform)
+		auto program = GetGLProgram(tech_index, m_nActivePassIndex);
+		if (program)
 		{
-			program->setUniformLocationWith1f(uniform->location, fValue);
-			PE_CHECK_GL_ERROR_DEBUG();
-			return true;
+			Uniform* uniform = GetUniformByID(index);
+			if (uniform)
+			{
+				program->setUniformLocationWith1f(uniform->location, fValue);
+				PE_CHECK_GL_ERROR_DEBUG();
+				ret = true;
+			}
 		}
 	}
 	return true;
@@ -355,14 +398,14 @@ bool ParaEngine::CEffectFileOpenGL::isParameterUsed(eParameterHandles index)
 	return GetUniformByID(index) != 0;
 }
 
-bool ParaEngine::CEffectFileOpenGL::initWithByteArrays(const char* vShaderByteArray, const char* fShaderByteArray, int nPass)
+bool ParaEngine::CEffectFileOpenGL::initWithByteArrays(const char* vShaderByteArray, const char* fShaderByteArray, int nTech, int nPass)
 {
-	releaseEffect(nPass);
-	auto program = GetGLProgram(nPass, true);
+	releaseEffect(nTech, nPass);
+	auto program = GetGLProgram(nTech, nPass, true);
 	if (program && program->initWithByteArrays(vShaderByteArray, fShaderByteArray))
 		return true;
 	else
-	{ 
+	{
 		OUTPUT_LOG("error: failed to compile shader: %s \n", GetFileName().c_str());
 		if (program)
 		{
@@ -372,10 +415,10 @@ bool ParaEngine::CEffectFileOpenGL::initWithByteArrays(const char* vShaderByteAr
 	}
 }
 
-bool ParaEngine::CEffectFileOpenGL::initWithFilenames(const std::string& vShaderFilename, const std::string& fShaderFilename, int nPass)
+bool ParaEngine::CEffectFileOpenGL::initWithFilenames(const std::string& vShaderFilename, const std::string& fShaderFilename, int nTech, int nPass)
 {
-	releaseEffect(nPass);
-	auto program = GetGLProgram(nPass, true);
+	releaseEffect(nTech, nPass);
+	auto program = GetGLProgram(nTech, nPass, true);
 	if (program && program->initWithFilenames(vShaderFilename, fShaderFilename))
 		return true;
 	else
@@ -389,28 +432,33 @@ bool ParaEngine::CEffectFileOpenGL::initWithFilenames(const std::string& vShader
 	}
 }
 
-cocos2d::GLProgram* ParaEngine::CEffectFileOpenGL::GetGLProgram(int nPass, bool bCreateIfNotExist)
+GLWrapper::GLProgram* ParaEngine::CEffectFileOpenGL::GetGLProgram(int nTech, int nPass, bool bCreateIfNotExist)
 {
-	if ((int)m_programs.size() <= nPass && bCreateIfNotExist)
+	if ((int)mTechniques.size() <= nTech)
 	{
-		m_programs.resize(nPass+1, NULL);
+		mTechniques.resize(nTech + 1);
 	}
-	if ((int)m_programs.size() > nPass)
+	auto & passes = mTechniques[nTech].mPasses;
+	if ((int)passes.size() <= nPass && bCreateIfNotExist)
 	{
-		auto program = m_programs[nPass];
+		passes.resize(nPass + 1, NULL);
+	}
+	if ((int)passes.size() > nPass)
+	{
+		auto program = passes[nPass];
 		if (program == NULL && bCreateIfNotExist)
 		{
-			program = new cocos2d::GLProgram();
-			m_programs[nPass] = program;
+			program = new GLWrapper::GLProgram();
+			passes[nPass] = program;
 		}
 		return program;
 	}
 	return NULL;
 }
 
-bool ParaEngine::CEffectFileOpenGL::link(int nPass)
+bool ParaEngine::CEffectFileOpenGL::link(int nTech, int nPass)
 {
-	auto program = GetGLProgram(nPass);
+	auto program = GetGLProgram(nTech, nPass);
 	if (program)
 	{
 		// we need to support color2 for block shader
@@ -433,28 +481,38 @@ bool ParaEngine::CEffectFileOpenGL::link(int nPass)
 	return false;
 }
 
-bool ParaEngine::CEffectFileOpenGL::use(int nPass)
+bool ParaEngine::CEffectFileOpenGL::use(int nTech, int nPass)
 {
-	auto program = GetGLProgram(nPass);
+	if (-1 == nTech)
+		nTech = mTechniqueIndex;
+	if (-1 == nPass)
+		nPass = m_nActivePassIndex;
+	auto program = GetGLProgram(nTech, nPass);
 	if (program)
 	{
 		program->use();
 		PE_CHECK_GL_ERROR_DEBUG();
+		if (mTechniqueIndex != nTech)
+		{
+			mTechniqueIndex = nTech;
+		}
 		if (m_nActivePassIndex != nPass)
 		{
 			m_nActivePassIndex = nPass;
-			// TODO: copy all uniforms to the new pass. 
+			// TODO: copy all uniforms to the new pass.
 		}
 		return true;
 	}
 	return false;
 }
 
-void ParaEngine::CEffectFileOpenGL::updateUniforms(int nPass)
+void ParaEngine::CEffectFileOpenGL::updateUniforms(int nTech, int nPass)
 {
+	if (nTech < 0)
+		nTech = mTechniqueIndex;
 	if (nPass < 0)
 		nPass = m_nActivePassIndex;
-	auto program = GetGLProgram(nPass);
+	auto program = GetGLProgram(nTech, nPass);
 	if (program)
 	{
 		program->updateUniforms();
@@ -467,14 +525,14 @@ void ParaEngine::CEffectFileOpenGL::updateUniforms(int nPass)
 	}
 }
 
-cocos2d::Uniform* ParaEngine::CEffectFileOpenGL::GetUniformByID(eParameterHandles id)
+GLWrapper::Uniform* ParaEngine::CEffectFileOpenGL::GetUniformByID(eParameterHandles id)
 {
-	return GetUniform(s_id_to_names[id]);
+	return GetUniform(m_ID2Names[id]);
 }
 
-cocos2d::Uniform* ParaEngine::CEffectFileOpenGL::GetUniform(const std::string& sName)
+GLWrapper::Uniform* ParaEngine::CEffectFileOpenGL::GetUniform(const std::string& sName)
 {
-	auto program = GetGLProgram(m_nActivePassIndex);
+	auto program = GetGLProgram(mTechniqueIndex, m_nActivePassIndex);
 	if (program)
 	{
 		return program->getUniform(sName);
@@ -488,7 +546,7 @@ void ParaEngine::CEffectFileOpenGL::applyFogParameters(bool bEnableFog, const Ve
 	{
 		setBool(k_fogEnable, bEnableFog);
 	}
-	// unlike directx, we will apply for parameters regardless of whether fog is enabled. 
+	// unlike directx, we will apply for parameters regardless of whether fog is enabled.
 	// if (bEnableFog)
 	{
 		if (isParameterUsed(k_fogParameters) && (fogParam != 0))
@@ -709,19 +767,20 @@ void ParaEngine::CEffectFileOpenGL::applyGlobalLightingData(CSunLight& sunlight)
 bool ParaEngine::CEffectFileOpenGL::begin(bool bApplyParam /*= true*/, DWORD flag /*= 0*/)
 {
 	IScene* pScene = CGlobals::GetEffectManager()->GetScene();
-	auto program = GetGLProgram();
+	auto program = GetGLProgram(mTechniqueIndex, m_nActivePassIndex);
 	if (program != 0)
 	{
-		if (m_programs.size() == 1)
+		if ((mTechniques.size() == 1)&&(mTechniques[0].mPasses.size() == 1))
 			program->use();
 		else
 		{
 			// TODO: multiple pass effect in opengl is implemented as shader arrays.
 			// uniform values are currently NOT shared among different passes like directX.
-			// hence DO NOT set any uniform between begin() and beginPass(). 
-			// TODO: In future: uniform values should be cached until Commit() is called. 
+			// hence DO NOT set any uniform between begin() and beginPass().
+			// TODO: In future: uniform values should be cached until Commit() is called.
 			program->use();
 		}
+		PE_CHECK_GL_ERROR_DEBUG();
 
 		if (bApplyParam)
 		{
@@ -742,7 +801,7 @@ bool ParaEngine::CEffectFileOpenGL::begin(bool bApplyParam /*= true*/, DWORD fla
 
 bool ParaEngine::CEffectFileOpenGL::BeginPass(int nPass, bool bForceBegin /*= false*/)
 {
-	return use(nPass);
+	return use(mTechniqueIndex, nPass);
 }
 
 void ParaEngine::CEffectFileOpenGL::CommitChanges()
@@ -770,13 +829,17 @@ void ParaEngine::CEffectFileOpenGL::end(bool bForceEnd /*= false*/)
 
 HRESULT ParaEngine::CEffectFileOpenGL::RendererRecreated()
 {
-	for (auto program : m_programs)
+	for (auto & tech : mTechniques)
 	{
-		if (program)
-			program->reset();
-		CC_SAFE_RELEASE_NULL(program);
+		for (auto program : tech.mPasses)
+		{
+			if (program)
+				program->reset();
+			SAFE_RELEASE(program);
+		}
+		tech.mPasses.clear();
 	}
-	m_programs.clear();
+	mTechniques.clear();
 	m_bIsInitialized = false;
 	return S_OK;
 }
@@ -810,7 +873,7 @@ void ParaEngine::CEffectFileOpenGL::EnableAlphaBlending(bool bAlphaBlending)
 {
 	if (isParameterUsed(k_bAlphaBlending))
 	{
-		AddParamChange(s_id_to_names[k_bAlphaBlending], bAlphaBlending);
+		AddParamChange(m_ID2Names[k_bAlphaBlending], bAlphaBlending);
 		// setBool(k_bAlphaBlending, bAlphaBlending);
 	}
 }
@@ -819,14 +882,17 @@ void ParaEngine::CEffectFileOpenGL::EnableAlphaTesting(bool bAlphaTesting)
 {
 	if (isParameterUsed(k_bAlphaTesting))
 	{
-		AddParamChange(s_id_to_names[k_bAlphaTesting], bAlphaTesting);
+		AddParamChange(m_ID2Names[k_bAlphaTesting], bAlphaTesting);
 		// setBool(k_bAlphaTesting, bAlphaTesting);
 	}
 }
 
 int ParaEngine::CEffectFileOpenGL::totalPasses() const
 {
-	return (int)m_programs.size();
+	if (mTechniqueIndex<(int)mTechniques.size())
+		return (int)mTechniques[mTechniqueIndex].mPasses.size();
+	else
+		return 0;
 }
 
 bool ParaEngine::CEffectFileOpenGL::setTexture(int index, TextureEntity* data)
@@ -835,8 +901,8 @@ bool ParaEngine::CEffectFileOpenGL::setTexture(int index, TextureEntity* data)
 	{
 		setTexture(index, data->GetTexture());
 
-		// ensure that sampler states matches the one used in the texture. if not, change the texture sampler 
-		// unless a texture is used with different sampler states during rendering, the glTexParameteri function is called at most once for a texture. 
+		// ensure that sampler states matches the one used in the texture. if not, change the texture sampler
+		// unless a texture is used with different sampler states during rendering, the glTexParameteri function is called at most once for a texture.
 		DWORD dwValue = 0;
 		CGlobals::GetRenderDevice()->GetSamplerState(index, D3DSAMP_MINFILTER, &dwValue);
 		if (dwValue == D3DTEXF_POINT && !data->IsSamplerStateBlocky())
@@ -864,7 +930,7 @@ bool ParaEngine::CEffectFileOpenGL::setTexture(int index, DeviceTexturePtr_type 
 
 HRESULT ParaEngine::CEffectFileOpenGL::SetRawValue(const char* hParameter, const void* pData, uint32 ByteOffset, uint32 nBytes)
 {
-	cocos2d::Uniform* uniform = GetUniform(hParameter);
+	auto uniform = GetUniform(hParameter);
 	if (uniform)
 	{
 		PE_ASSERT(ByteOffset == 0);
@@ -908,165 +974,45 @@ bool ParaEngine::CEffectFileOpenGL::SetMatrix(const char* hParameter, const Matr
 }
 
 
-bool ParaEngine::CEffectFileOpenGL::LoadBuildinShader()
-{
-	if (m_filename == ":IDR_FX_BLOCK")
-	{
-		int nPass = 0;
-		if (initWithByteArrays(shaderBlockEffect_vert, shaderOpacheBlockEffect_frag, nPass))
-		{
-			if (link(nPass))
-			{
-				updateUniforms(nPass);
-			}
-		}
-		nPass = 1;
-		if (initWithByteArrays(shaderBlockSelectEffect_vert, shaderBlockSelectEffect_frag, nPass))
-		{
-			if (link(nPass))
-			{
-				updateUniforms(nPass);
-			}
-		}
-		nPass = 2;
-		if (initWithByteArrays(shaderTransparentBlockEffect_vert, shaderTransparentBlockEffect_frag, nPass))
-		{
-			if (link(nPass))
-			{
-				updateUniforms(nPass);
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_SINGLECOLOR")
-	{
-		if (initWithByteArrays(singleColorEffect_vert, singleColorEffect_frag))
-		{
-			if (link())
-			{
-				updateUniforms();
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_SIMPLE_MESH_NORMAL")
-	{
-		if (initWithByteArrays(meshNormalEffect_vert, meshNormalEffect_frag))
-		{
-			if (link())
-			{
-				updateUniforms();
-				// set initial value, opengl does not support initial value in shader. 
-				SetFloat("opacity", 1.f);
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_SIMPLE_PARTICLE")
-	{
-		if (initWithByteArrays(particleEffect_vert, particleEffect_frag))
-		{
-			if (link())
-			{
-				updateUniforms();
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_GUI")
-	{
-		if (initWithByteArrays(guiEffect_vert, guiEffect_frag))
-		{
-			if (link())
-			{
-				updateUniforms();
-				// set initial value, opengl does not support initial value in shader. 
-				SetBool("k_bBoolean0", true);
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_GUI_TEXT")
-	{
-		if (initWithByteArrays(guiTextEffect_vert, guiTextEffect_frag))
-		{
-			if (link())
-			{
-				updateUniforms();
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_SKY")
-	{
-		if (initWithByteArrays(skyMeshEffect_vert, skyMeshEffect_frag))
-		{
-			if (link())
-			{
-				updateUniforms();
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_SKYDOME")
-	{
-		int nPass = 0;
-		if (initWithByteArrays(skyDomeEffect_vert, skyDomeDayEffect_frag, nPass))
-		{
-			if (link(nPass))
-			{
-				updateUniforms(nPass);
-			}
-		}
-		nPass = 1;
-		if (initWithByteArrays(skyDomeEffect_vert, skyDomeNightEffect_frag, nPass))
-		{
-			if (link(nPass))
-			{
-				updateUniforms(nPass);
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_TERRAIN_NORMAL")
-	{
-		if (initWithByteArrays(terrainEffect_vert, terrainEffect_frag))
-		{
-			if (link())
-			{
-				updateUniforms();
-			}
-		}
-		return true;
-	}
-	else if (m_filename == ":IDR_FX_BMAXMODEL")
-	{
-		if (initWithByteArrays(shaderBlockMaxEffect_vert, shaderBlockMaxEffect_frag))
-		{
-			if (link())
-			{
-				updateUniforms();
-			}
-		}
-		return true;
-	}
-	return false;
-}
-
 bool ParaEngine::CEffectFileOpenGL::SetFirstValidTechniqueByCategory(TechniqueCategory nCat)
 {
+	if (mTechniqueIndex >= (int)mTechniques.size())
+		return false;
+	if (mTechniques[mTechniqueIndex].nCategory == nCat)
+		return true;
+	vector<TechniqueDescGL>::const_iterator itCur, itEnd = mTechniques.end();
+	int i = 0;
+	for (itCur = mTechniques.begin(); itCur != itEnd; ++itCur, ++i)
+	{
+		if ((*itCur).nCategory == nCat)
+		{
+			mTechniqueIndex = i;
+			return true;
+		}
+	}
 	return false;
 }
 
 bool ParaEngine::CEffectFileOpenGL::SetTechniqueByIndex(int nIndex)
 {
-	return false;
+	if (mTechniqueIndex == nIndex)
+		return true;
+	else if ((int)mTechniques.size()>nIndex)
+	{
+		mTechniqueIndex = nIndex;
+		return true;
+	}
+	else
+		return false;
 }
 
 const ParaEngine::CEffectFileOpenGL::TechniqueDesc* ParaEngine::CEffectFileOpenGL::GetCurrentTechniqueDesc()
 {
 	static TechniqueDesc s_tech;
-	return &s_tech;
+	if (mTechniqueIndex<(int)mTechniques.size())
+		return &(mTechniques[mTechniqueIndex]);
+	else
+		return &s_tech;
 }
 
 bool ParaEngine::CEffectFileOpenGL::SetBoolean(int nIndex, bool value)
@@ -1079,5 +1025,243 @@ bool ParaEngine::CEffectFileOpenGL::SetBoolean(int nIndex, bool value)
 	return false;
 }
 
-#endif
+void ParaEngine::CEffectFileOpenGL::SetShadowMapSize(int nsize)
+{
+	if (isParameterUsed(k_nShadowmapSize))
+	{
+		setInt(k_nShadowmapSize, nsize);
+	}
+}
 
+bool ParaEngine::CEffectFileOpenGL::MappingEffectUniforms()
+{
+	if (!m_Effect) return false;
+
+	static std::unordered_map<std::string, uint32> table;
+	{
+		table["world"] = k_worldMatrix;
+		table["worldinverse"] = k_worldInverseMatrix;
+		table["worldview"] = k_worldViewMatrix;
+		table["worldviewprojection"] = k_worldViewProjMatrix;
+		table["worldmatrixarray"] = k_worldMatrixArray;
+		table["skyboxmatrix"] = k_skyBoxMatrix;
+		table["view"] = k_viewMatrix;
+		table["projection"] = k_projMatrix;
+		table["viewprojection"] = k_viewProjMatrix;
+		table["texworldviewproj"] = k_TexWorldViewProjMatrix;
+		table["materialambient"] = k_ambientMaterialColor;
+		table["materialdiffuse"] = k_diffuseMaterialColor;
+		table["materialspecular"] = k_specularMaterialColor;
+		table["materialemissive"] = k_emissiveMaterialColor;
+		table["posScaleOffset"] = k_posScaleOffset;
+		table["uvScaleOffset"] = k_uvScaleOffset;
+		table["flareColor"] = k_lensFlareColor;
+		table["fogparameters"] = k_fogParameters;
+		table["fogColor"] = k_fogColor;
+		table["shadowfactor"] = k_shadowFactor;
+		table["LightStrength"] = k_LightStrength;
+		table["shadowfactor"] = k_shadowFactor;
+		table["LightStrength"] = k_LightStrength;
+		table["LightColors"] = k_LightColors;
+		table["LightPositions"] = k_LightPositions;
+		table["FresnelR0"] = k_fresnelR0;
+		table["ConstVector0"] = k_ConstVector0;
+		table["ConstVector1"] = k_ConstVector1;
+		table["ConstVector2"] = k_ConstVector2;
+		table["ConstVector3"] = k_ConstVector3;
+		table["sunvector"] = k_sunVector;
+		table["suncolor"] = k_sunColor;
+		table["worldcamerapos"] = k_cameraPos;
+		table["viewdistances"] = k_cameraDistances;
+		table["worldviewvector"] = k_cameraFacing;
+		table["ambientlight"] = k_ambientLight;
+		table["sunlight_inscatter"] = k_sunlightInscatter;
+		table["sunlight_extinction"] = k_sunlightExtinction;
+		table["worldpos"] = k_worldPos;
+		table["texCoordOffset"] = k_texCoordOffset;
+		table["curnumbones"] = k_boneInfluenceCount;
+		table["fogenable"] = k_fogEnable;
+		table["alphatesting"] = k_bAlphaTesting;
+
+		// boolean
+		for (int i = 0; i < (k_bBooleanMAX - k_bBoolean0); i++)
+		{
+			char buf[64]{ 0 };
+			sprintf(buf, "boolean%d", i);
+			table[buf] = k_bBoolean0 + i;
+		}
+
+		table["sunlightenable"] = k_bSunlightEnable;
+		table["shadowmapsize"] = k_nShadowmapSize;
+		table["shadowradius"] = k_fShadowRadius;
+		table["materialpower"] = k_specularMaterialPower;
+		table["reflectfactor"] = k_reflectFactor;
+		table["locallightnum"] = k_LocalLightNum;
+		table["layersnum"] = k_LayersNum;
+		table["time"] = k_time;
+		table["opacity"] = k_opacity;
+		table["specularPower"] = k_specularPower;
+		table["transitionFactor"] = k_transitionFactor;
+		table["LightParams"] = k_LightParams;
+
+
+	}
+
+	m_ID2Names.clear();
+	auto uniforms = m_Effect->getUniforms();
+	static char numerals[] = { '0','1','2','3','4','5','6','7','8','9' };
+	for (auto uniform : uniforms)
+	{
+		std::string sec = uniform->getSemantic();
+		std::string name = uniform->getName();
+		std::string type = uniform->getType();
+		auto it = table.find(sec);
+		if (it != table.end()) {
+			uint32 id = it->second;
+			m_ID2Names[id] = name;
+		}
+		else if (type == "sampler2D" || type == "sampler3D" || type == "SamplerCube") {
+			int iPos = (int)name.find_first_of(numerals, 0, sizeof(numerals));
+
+			if (iPos != string::npos)
+			{
+				int iTexture = atoi(&name[iPos]);
+				if (iTexture >= 0 && iTexture < (k_tex_max - k_tex0))
+				{
+					table[name] = k_tex0 + iTexture;
+				}
+			}
+
+		}
+		else {
+			std::cout << std::endl << "can't parse uniform " << name << ", unkonw semantic " << sec << std::endl;
+		}
+	}
+
+	return true;
+
+}
+
+static const std::string StringToLower(const std::string& str)
+{
+	std::string data = str;
+	std::transform(data.begin(), data.end(), data.begin(), ::tolower);
+	return data;
+}
+
+
+bool ParaEngine::CEffectFileOpenGL::GeneratePasses()
+{
+	if (m_Effect == NULL)return false;
+	auto techniques = m_Effect->getTechiques();
+	if (techniques.empty()) {
+		std::cout << std::endl << "no techinique" << std::endl;
+		return false;
+	}
+	auto tec = techniques[0];
+	auto passes = tec->getPasses();
+	if (passes.empty())
+	{
+		std::cout << std::endl << "no pass" << std::endl;
+		return false;
+	}
+
+	for (int nPass = 0; nPass < passes.size(); nPass++)
+	{
+		auto pass = passes[nPass];
+		auto states = pass->getStateAssignments();
+		std::string vs_codeblock_name = "";
+		std::string ps_codeblock_name = "";
+		for (auto state : states)
+		{
+			const std::string lowerName = StringToLower(state->getName());
+			if (lowerName == "vertexshader" || lowerName == "pixelshader")
+			{
+				auto value = state->getValue();
+				if (value->getValueType() == StateValueType::COMPILE)
+				{
+					auto compileValue = static_cast<const StateCompileValue*>(value);
+					if (lowerName == "vertexshader")
+					{
+						vs_codeblock_name = compileValue->getEntryPoint();
+					}
+					if (lowerName == "pixelshader")
+					{
+						ps_codeblock_name = compileValue->getEntryPoint();
+					}
+					if (vs_codeblock_name != "" && ps_codeblock_name != "")
+					{
+						break;
+					}
+				}
+			}
+		}
+
+		if (vs_codeblock_name == "")
+		{
+			std::cout << std::endl << "Vertex Shader Codeblock name can't be empty" << std::endl;
+			return false;
+		}
+
+		if (ps_codeblock_name == "")
+		{
+			std::cout << std::endl << "Pixel Shader Codeblock name can't be empty" << std::endl;
+			return false;
+		}
+
+
+		// find code block
+		std::string vscode = "";
+		std::string pscode = "";
+		auto codeblocks = m_Effect->getCodeBlocks();
+		for (auto codeblock : codeblocks)
+		{
+			if (codeblock->getName() == vs_codeblock_name)
+			{
+				vscode = codeblock->getCode();
+			}
+			if (codeblock->getName() == ps_codeblock_name)
+			{
+				pscode = codeblock->getCode();
+			}
+			if (vscode != "" && pscode != "") break;
+		}
+
+		if (vscode == "")
+		{
+			std::cout << std::endl << "can't find vertex shader codeblock. " << vs_codeblock_name << std::endl;
+			return false;
+		}
+		if (pscode == "")
+		{
+			std::cout << std::endl << "can't find pixel shader codeblock. " << ps_codeblock_name << std::endl;
+			return false;
+		}
+		std::cout << std::endl << "Compile Pass " << nPass << std::endl;        // compile
+		if (initWithByteArrays(vscode.c_str(), pscode.c_str(), nPass))
+		{
+			if (link(nPass))
+			{
+				updateUniforms(nPass);
+			}
+			else
+			{
+				std::cerr << "[" << m_filename << "] link pass " << nPass << " failed!" << std::endl;
+				return false;
+			}
+		}
+		else
+		{
+			std::cerr << "[" << m_filename << "] compile pass " << nPass << " failed!" << std::endl;
+			return false;
+		}
+
+
+	}
+
+
+	return true;
+
+}
+
+#endif

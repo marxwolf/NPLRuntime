@@ -14,6 +14,8 @@
 using namespace ScreenShot;
 #endif
 
+#include "util/StringHelper.h"
+#include "AISimulator.h"
 #include "MoviePlatform.h"
 #include "ParaScriptingMovie.h"
 
@@ -73,11 +75,54 @@ namespace ParaScripting
 		return CGlobals::GetMoviePlatform()->TakeScreenShot(filename);
 	}
 
-	bool ParaMovie::TakeScreenShot3( const char* filename, int width, int height )
+	bool ParaMovie::TakeScreenShot3(const char* filename, int width, int height)
 	{
 		return CGlobals::GetMoviePlatform()->TakeScreenShot(filename, width, height);
 	}
 
+	void ParaMovie::TakeScreenShot_Async(const char* filename, const char* sCallBackScript)
+	{
+		TakeScreenShot_Async_Internal(filename, false, -1, -1, sCallBackScript);
+	}
+	void ParaMovie::TakeScreenShot2_Async(const char* filename, bool bEncode, const char* sCallBackScript)
+	{
+		TakeScreenShot_Async_Internal(filename, bEncode, -1, -1, sCallBackScript);
+	}
+	void ParaMovie::TakeScreenShot3_Async(const char* filename, bool bEncode, int width, int height, const char* sCallBackScript)
+	{
+		TakeScreenShot_Async_Internal(filename, bEncode, width, height, sCallBackScript);
+	}
+	void ParaMovie::TakeScreenShot_Async_Internal(const char* filename, bool bEncode, int width, int height, const char* sCallBackScript)
+	{
+#ifdef WIN32
+		string callback_script = sCallBackScript;
+		std::function<void(bool, std::vector<BYTE>&)> callback = [=](bool bSuccessful, std::vector<BYTE>& base64) {
+			if (!callback_script.empty())
+			{
+				string scode, sequence;
+				string base64Str = "";
+				string size = std::to_string(base64.size());
+				if (bEncode)
+				{
+					base64Str = string(base64.begin(), base64.end());
+				}
+				ParaEngine::StringHelper::DevideString(sCallBackScript, scode, sequence);
+				if (bSuccessful)
+				{
+					scode = "msg={res = 0, base64 = \"" + base64Str + "\" , size = " + size + ", s = " + sequence + "};" + scode;
+				}
+				else
+				{
+					scode = "msg={res = -1, base64 = \"" + base64Str + "\" , size = " + size + ", s = " + sequence + "};" + scode;
+				}
+				ParaEngine::CGlobals::GetAISim()->NPLActivate("", scode.c_str(), (int)(scode.size()));
+			}
+		};
+		CGlobals::GetMoviePlatform()->TakeScreenShot_Async(filename, bEncode, width, height, [=](bool bSuccessful, std::vector<BYTE>& base64) {
+			callback(bSuccessful, base64);
+		});
+#endif
+	}
 	// this function is obsoleted, use ParaMovie::TakeScreenShot3 instead. 
 	bool ParaMovie::RenderToTexture(const char* filename, int width, int height)
 	{

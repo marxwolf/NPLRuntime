@@ -25,8 +25,22 @@ namespace ParaEngine
 		:m_bUseAO(true), m_nFaceCount(6), m_bDisableFaceCulling(false), m_bUseSelfLighting(false), m_bIsCubeAABB(true), m_nTextureIndex(0), m_bUniformLighting(false)
 	{
 		m_Vertices.resize(24);
-		LoadModelByTexture(texFaceNum);
-		m_shapeAABB.SetMinMax(Vector3(0, 0, 0), Vector3(BlockConfig::g_blockSize,BlockConfig::g_blockSize,BlockConfig::g_blockSize));
+		LoadModelByTexture(6);
+		m_shapeAABB.SetMinMax(Vector3(0, 0, 0), Vector3(BlockConfig::g_blockSize, BlockConfig::g_blockSize, BlockConfig::g_blockSize));
+	}
+
+	void BlockModel::LoadCubeModel()
+	{
+		m_bDisableFaceCulling = false;
+		m_bUseAO = true;
+		m_nFaceCount = 6;
+		m_bUseSelfLighting = false;
+		m_bIsCubeAABB = true;
+		m_nTextureIndex = 0;
+		m_bUniformLighting = false;
+		m_Vertices.resize(24);
+		LoadModelByTexture(6);
+		m_shapeAABB.SetMinMax(Vector3(0, 0, 0), Vector3(BlockConfig::g_blockSize, BlockConfig::g_blockSize, BlockConfig::g_blockSize));
 	}
 
 	void BlockModel::CloneRenderData(const BlockModel& from_block)
@@ -150,6 +164,44 @@ namespace ParaEngine
 			m_Vertices[g_rightLT].SetTexcoord(0,0.5f);
 			m_Vertices[g_rightRT].SetTexcoord(0.5f,0.5f);
 			m_Vertices[g_rightRB].SetTexcoord(0.5f,1);
+
+			//back face
+			m_Vertices[g_bkLB].SetTexcoord(0,1);
+			m_Vertices[g_bkLT].SetTexcoord(0,0.5f);
+			m_Vertices[g_bkRT].SetTexcoord(0.5f,0.5f);
+			m_Vertices[g_bkRB].SetTexcoord(0.5f,1);
+		}
+		else if(texFaceNum == 4)
+		{
+			//top face
+			m_Vertices[g_topLB].SetTexcoord(0,0.5f);
+			m_Vertices[g_topLT].SetTexcoord(0,0);
+			m_Vertices[g_topRT].SetTexcoord(0.5f,0);
+			m_Vertices[g_topRB].SetTexcoord(0.5f,0.5f);
+
+			//front face
+			m_Vertices[g_frtLB].SetTexcoord(0,1);
+			m_Vertices[g_frtLT].SetTexcoord(0,0.5f);
+			m_Vertices[g_frtRT].SetTexcoord(0.5f,0.5f);
+			m_Vertices[g_frtRB].SetTexcoord(0.5f,1);
+
+			//bottom face
+			m_Vertices[g_btmLB].SetTexcoord(0.5f,0.5f);
+			m_Vertices[g_btmLT].SetTexcoord(0.5,0);
+			m_Vertices[g_btmRT].SetTexcoord(1,0);
+			m_Vertices[g_btmRB].SetTexcoord(1,0.5);
+
+			//left face
+			m_Vertices[g_leftLB].SetTexcoord(0.5f,1);
+			m_Vertices[g_leftLT].SetTexcoord(0.5f,0.5f);
+			m_Vertices[g_leftRT].SetTexcoord(1,0.5f);
+			m_Vertices[g_leftRB].SetTexcoord(1,1);
+
+			//right face
+			m_Vertices[g_rightLB].SetTexcoord(0.5f,1);
+			m_Vertices[g_rightLT].SetTexcoord(0.5f,0.5f);
+			m_Vertices[g_rightRT].SetTexcoord(1,0.5f);
+			m_Vertices[g_rightRB].SetTexcoord(1,1);
 
 			//back face
 			m_Vertices[g_bkLB].SetTexcoord(0,1);
@@ -426,6 +478,7 @@ namespace ParaEngine
 	{
 		m_Vertices[nIndex].SetHeightScale(scale);
 	}
+	
 	void BlockModel::SetVerticalScale(EdgeVertexFlag vertex,float scale)
 	{
 		if(vertex == evf_xyz)
@@ -1317,7 +1370,7 @@ namespace ParaEngine
 					}
 					else
 					{
-						// Note: the indices must be face1(0,1,3)  face2(1,2,3)
+						// Note: the indices must be face1(0,1,2)  face2(2,0,3) 
 						int nFaceIndex = 0;
 						for (int i = 0; i < m_nFaceCount; ++i)
 						{

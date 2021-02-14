@@ -7,12 +7,22 @@
 // Desc: 
 //-----------------------------------------------------------------------------
 #include "ParaEngine.h"
-#include "CyoEncode.h"
-#include "CyoDecode.h"
+
 #include "util/MD5.h"
+#include "util/sha1.h"
+#include "util/CyoEncode.h"
+#include "util/CyoDecode.h"
 #include "StringHelper.h"
 #include <boost/thread/tss.hpp>
 #include "ConvertUTF.h"
+
+#include <unordered_map>
+
+//#undef USE_ICONV
+
+#ifdef USE_ICONV
+	#include "iconv.h"
+#endif
 
 #ifdef USE_BOOST_REGULAR_EXPRESSION
 #include "boost/regex.hpp"
@@ -25,8 +35,10 @@ using namespace ParaEngine;
 */
 const char g_simpleXOR_key[] = "Copyright@ParaEngine, LiXizhi";
 
+StringHelper::_CodePageName StringHelper::defaultCPName;
 
-const WCHAR* ParaEngine::StringHelper::MultiByteToWideChar(const char* name, unsigned int nCodePage)
+
+const WCHAR* ParaEngine::StringHelper::MultiByteToWideChar(const char* name, unsigned int nCodePage, size_t* outLen)
 {
 	static boost::thread_specific_ptr< vector<WCHAR> > wsName_;
 	if (!wsName_.get()) {
@@ -44,13 +56,20 @@ const WCHAR* ParaEngine::StringHelper::MultiByteToWideChar(const char* name, uns
 			wsName.resize(nLength);
 		int nResult = ::MultiByteToWideChar(nCodePage, (nCodePage == CP_UTF8) ? 0 : MB_PRECOMPOSED, name, -1, &(wsName[0]), nLength);
 		wsName[nLength - 1] = L'\0';
+
+		if (outLen)
+			*outLen = nLength;
 	}
 	else
 	{
 		if (((int)wsName.size()) < 1)
 			wsName.resize(1);
 		wsName[0] = L'\0';
+
+		if (outLen)
+			*outLen = 0;
 	}
+
 	return &(wsName[0]);
 #else
 	size_t nLength = mbstowcs( 0, name, 0);
@@ -59,20 +78,29 @@ const WCHAR* ParaEngine::StringHelper::MultiByteToWideChar(const char* name, uns
 		if(wsName.size()<=nLength) 
 			wsName.resize(nLength+1);
 		size_t nResult= mbstowcs( &(wsName[0]), name, nLength+1);
+
+		if (outLen)
+			*outLen = nResult;
 	}
 	else
 	{
 		if(((int)wsName.size())<1) 
 			wsName.resize(1);
 		wsName[0] = L'\0';
+
+		if (outLen)
+			*outLen = 0;
 	}
 	return &(wsName[0]);
 #endif
 
 }
 
-const char* ParaEngine::StringHelper::WideCharToMultiByte(const WCHAR* name, unsigned int nCodePage)
+const char* ParaEngine::StringHelper::WideCharToMultiByte(const WCHAR* name, unsigned int nCodePage, size_t* outLen)
 {
+	if (name == NULL)
+		return NULL;
+
 	static boost::thread_specific_ptr< vector<char> > cName_;
 	if (!cName_.get()) {
 		// first time called by this thread
@@ -89,12 +117,18 @@ const char* ParaEngine::StringHelper::WideCharToMultiByte(const WCHAR* name, uns
 			cName.resize(nLength);
 		int nResult = ::WideCharToMultiByte(nCodePage, 0, name, -1, &(cName[0]), nLength, NULL, NULL);
 		cName[nLength - 1] = '\0';
+
+		if (outLen)
+			*outLen = nLength;
 	}
 	else
 	{
 		if (((int)cName.size()) < 1)
 			cName.resize(1);
 		cName[0] = '\0';
+
+		if (outLen)
+			*outLen = 0;
 	}
 	return &(cName[0]);
 #else
@@ -104,12 +138,18 @@ const char* ParaEngine::StringHelper::WideCharToMultiByte(const WCHAR* name, uns
 		if(cName.size()<nLength) 
 			cName.resize(nLength);
 		wcstombs( &(cName[0]), name, nLength+1);
+
+		if (outLen)
+			*outLen = nLength;
 	}
 	else
 	{
 		if(((int)cName.size())<1) 
 			cName.resize(1);
 		cName[0] = '\0';
+
+		if (outLen)
+			*outLen = 0;
 	}
 	return &(cName[0]);
 #endif
@@ -117,6 +157,8 @@ const char* ParaEngine::StringHelper::WideCharToMultiByte(const WCHAR* name, uns
 
 int ParaEngine::StringHelper::WideCharToMultiByte(const WCHAR* name, char* szText, int nLength, unsigned int nCodePage /*= 0*/)
 {
+	if (name == NULL)
+		return 0;
 #ifdef WIN32
 	if (nLength > 0)
 	{
@@ -161,23 +203,213 @@ const char* ParaEngine::StringHelper::WideCharToAnsi(const WCHAR* name)
 #endif
 }
 
+#ifdef USE_ICONV
+
+static const std::string& code_convert(const char *from_charset, const char *to_charset, const char *inbuf, size_t inlen, bool appendZero = false)
+{
+
+	struct ZeroInfo
+	{
+		char charset_zero[4];
+		unsigned int  zero_size;
+	};
+
+	struct iconvObject
+	{
+		iconvObject(iconv_t _cd) : cd(_cd) {};
+		iconvObject() : cd((iconv_t)-1){};
+
+		iconvObject& operator = (iconv_t _cd)
+		{
+			cd = _cd;
+
+			return *this;
+		}
+
+		~iconvObject()
+		{
+			if (cd != (iconv_t)-1)
+				iconv_close(cd);
+		}
+		iconv_t cd;
+	};
+
+	static std::unordered_map<std::string, ZeroInfo> ZeroCache;
+	static boost::thread_specific_ptr<std::unordered_map<std::string, iconvObject>> IconvCache_;
+	static ParaEngine::mutex m;
+
+	if (!IconvCache_.get())
+		IconvCache_.reset(new std::unordered_map<std::string, iconvObject>());
+
+	static boost::thread_specific_ptr< std::string > cName_;
+	if (!cName_.get()) {
+		// first time called by this thread
+		// construct test element to be used in all subsequent calls from this thread
+		cName_.reset(new std::string());
+	}
+
+	static boost::thread_specific_ptr<std::string> sKey_;
+	if (!sKey_.get())
+		sKey_.reset(new std::string());
+
+	auto& cName = *cName_;
+	auto& IconvCache = *IconvCache_;
+	auto& sKey = *sKey_;
+
+#if _LIBICONV_VERSION == 0x109 || _LIBICONV_VERSION == 0x010F
+	typedef const char* iconv_input_type;
+#else
+	typedef char* iconv_input_type;
+#endif
+
+	do
+	{
+		size_t len, outlen;
+		char* s;
+		size_t ret;
+
+		char* charset_zero;
+		size_t zero_size;
+
+		sKey = from_charset;
+		sKey += to_charset;
+
+		if (appendZero)
+		{
+			ParaEngine::Lock lock_(m);
+
+			auto it = ZeroCache.find(sKey);
+
+			if (it != ZeroCache.end())
+			{
+				charset_zero = it->second.charset_zero;
+				zero_size = it->second.zero_size;
+			}
+			else
+			{
+				static const char zero = '\0';
+				
+				iconv_t z_cd = iconv_open(to_charset, "gb2312");
+				if (z_cd == (iconv_t)-1)
+				{
+					break;
+				}
+
+				len = 2 + 2;
+				outlen = len;
+
+				ZeroCache[sKey] = ZeroInfo();
+				ZeroInfo& info = ZeroCache[sKey];
+
+				charset_zero = info.charset_zero;
+				s = charset_zero;
+				iconv_input_type pZero = (iconv_input_type)&zero;
+				size_t zeorlen = 1;
+
+				ret = iconv(z_cd, &pZero, &zeorlen, &s, &outlen);
+				iconv_close(z_cd);
+				if (ret == (size_t)-1)
+				{
+					break;
+				}
+
+				zero_size = len - outlen;
+				info.zero_size = (unsigned int)zero_size;
+			}
+		}
+
+		auto it = IconvCache.find(sKey);
+
+		iconv_t cd;
+		if (it == IconvCache.end())
+		{
+			cd = iconv_open(to_charset, from_charset);
+			if (cd == (iconv_t)-1)
+			{
+				break;
+			}
+
+			IconvCache[sKey] = cd;
+		}
+		else
+		{
+			cd = it->second.cd;
+		}
+
+		len = inlen * 2 + 2;
+		outlen = len;
+		if (cName.size() < outlen)
+			cName.resize(outlen);
+
+		s = &cName[0];
+		iconv_input_type pInbuf = (iconv_input_type)inbuf;
+
+		ret = iconv(cd, &pInbuf, &inlen, &s, &outlen);
+
+		if (ret == (size_t )-1)
+		{
+			break;
+		}
+
+		outlen = len - outlen;
+
+		if (appendZero)
+		{
+			memcpy(&cName[outlen], charset_zero, zero_size);
+			cName.resize(outlen + zero_size);
+		}
+		else
+		{
+			cName.resize(outlen);
+		}
+
+		return cName;
+
+	} while (false);
+
+	OUTPUT_LOG("conversion from %s to %s not available", from_charset ? from_charset : "unknow", to_charset ? to_charset : "unknow");
+	cName = std::string(inbuf, inlen);
+	return cName;
+}
+#endif
+
+
+
 const char* ParaEngine::StringHelper::UTF8ToAnsi(const char* name)
 {
-#ifdef WIN32
-	return WideCharToMultiByte(MultiByteToWideChar(name, CP_UTF8), CP_ACP);
+	if (name == NULL)
+		return NULL;
+#ifdef USE_ICONV
+	size_t inlen = strlen(name);
+	auto& s = code_convert("utf-8", defaultCPName.get().c_str(), name, inlen, true);
+	return s.c_str();
+
 #else
-	// this is not supported in linux, just forward input to output.
-	return name;
+	#ifdef WIN32
+		return WideCharToMultiByte(MultiByteToWideChar(name, CP_UTF8), CP_ACP);
+	#else
+		// this is not supported in linux, just forward input to output.
+		return name;
+	#endif
 #endif
 }
 
 const char* ParaEngine::StringHelper::AnsiToUTF8(const char* name)
 {
-#ifdef WIN32
-	return WideCharToMultiByte(MultiByteToWideChar(name, CP_ACP), CP_UTF8);
+	if (name == NULL)
+		return NULL;
+#ifdef USE_ICONV
+	size_t inlen = strlen(name);
+	auto& s = code_convert(defaultCPName.get().c_str(), "utf-8", name, inlen, true);
+	return s.c_str();
+
 #else
-	// this is not supported in linux, just forward input to output
-	return name;
+	#ifdef WIN32
+		return WideCharToMultiByte(MultiByteToWideChar(name, CP_ACP), CP_UTF8);
+	#else
+		// this is not supported in linux, just forward input to output
+		return name;
+	#endif
 #endif
 }
 
@@ -238,7 +470,7 @@ std::string StringHelper::UniSubString(const char* szText, int nFrom, int nTo)
 	return "";
 }
 
-const char* StringHelper::SimpleEncode(const char* source)
+std::string StringHelper::SimpleEncode(const std::string& source)
 {
 	static boost::thread_specific_ptr< std::string > g_code_;
 	if (!g_code_.get()) {
@@ -253,7 +485,7 @@ const char* StringHelper::SimpleEncode(const char* source)
 	}
 	std::string& g_code = *g_code_;
 
-	int nSize = (int)strlen(source);
+	size_t nSize = source.size();
 	int nBufferSize = CyoEncode::Base64EncodeGetLength((unsigned long)nSize);
 	const int MAX_BINARY_DATA_SIZE = 102400000;
 	if (nBufferSize < MAX_BINARY_DATA_SIZE)
@@ -269,7 +501,7 @@ const char* StringHelper::SimpleEncode(const char* source)
 			//////////////////////////////////////////////////////////////////////////
 			int nKeySize = sizeof(g_simpleXOR_key);
 			int nKeyIndex = 0;
-			for (int i = 0; i < nSize; ++i, ++nKeyIndex)
+			for (size_t i = 0; i < nSize; ++i, ++nKeyIndex)
 			{
 				if (nKeyIndex >= nKeySize)
 					nKeyIndex = 0;
@@ -281,17 +513,17 @@ const char* StringHelper::SimpleEncode(const char* source)
 			g_code = buff;
 			delete[] buff;
 			delete[] buffSrc;
-			return g_code.c_str();
+			return g_code;
 		}
 	}
 	else
 	{
 		OUTPUT_LOG("error: SimpleEncode max length exceeded: %d \n", nBufferSize);
 	}
-	return NULL;
+	return "";
 }
 
-const char* StringHelper::SimpleDecode(const char* source)
+std::string StringHelper::SimpleDecode(const std::string& source)
 {
 	static boost::thread_specific_ptr< std::string > g_code_;
 	if (!g_code_.get()) {
@@ -306,7 +538,7 @@ const char* StringHelper::SimpleDecode(const char* source)
 	}
 	std::string& g_code = *g_code_;
 
-	int nSize = (int)strlen(source);
+	size_t nSize = source.size();
 	int nBufferSize = 0;
 	try
 	{
@@ -316,7 +548,7 @@ const char* StringHelper::SimpleDecode(const char* source)
 	{
 		g_code = "";
 		OUTPUT_LOG("invalid source length when calling ParaMisc.SimpleDecode()\n");
-		return g_code.c_str();
+		return g_code;
 	}
 
 	const int MAX_BINARY_DATA_SIZE = 102400000;
@@ -331,7 +563,7 @@ const char* StringHelper::SimpleDecode(const char* source)
 			//////////////////////////////////////////////////////////////////////////
 			try
 			{
-				int filledsize = (int)CyoDecode::Base64Decode(buff, source, nSize);
+				int filledsize = (int)CyoDecode::Base64Decode(buff, (const unsigned char*)source.c_str(), nSize);
 				buff[filledsize] = '\0';
 
 				int nKeySize = sizeof(g_simpleXOR_key);
@@ -342,7 +574,9 @@ const char* StringHelper::SimpleDecode(const char* source)
 						nKeyIndex = 0;
 					buff[i] = buff[i] ^ g_simpleXOR_key[nKeyIndex];
 				}
-				g_code = buff;
+				//g_code = buff;
+				g_code.clear();
+				g_code.append(buff, filledsize);
 			}
 			catch (...)
 			{
@@ -351,32 +585,36 @@ const char* StringHelper::SimpleDecode(const char* source)
 			}
 
 			delete[] buff;
-			return g_code.c_str();
+			return g_code;
 		}
 	}
 	return NULL;
 }
 
-const char* StringHelper::EncodingConvert(const char* srcEncoding, const char* dstEncoding, const char* bytes)
-{
-	if (!bytes || bytes[0] == '\0')
-		return CGlobals::GetString().c_str();
 
-	static boost::thread_specific_ptr< vector<char> > g_result_;
+const std::string& StringHelper::EncodingConvert(const std::string& srcEncoding, const std::string& dstEncoding, const std::string& bytes)
+{
+	if (bytes.empty())
+		return CGlobals::GetString();
+
+
+	static boost::thread_specific_ptr< std::string > g_result_;
+
 	if (!g_result_.get()) {
 		// first time called by this thread
 		// construct test element to be used in all subsequent calls from this thread
-		g_result_.reset(new vector<char>());
+		g_result_.reset(new std::string());
 	}
-	vector<char>& g_result = *g_result_;
+
+	auto& g_result = *g_result_;
 
 	int nResultSize = 0;
-	g_result.resize(256);
 
-	if ((strcmp(srcEncoding, "HTML") == 0) && (dstEncoding == NULL || dstEncoding[0] == '\0'))
+	if (srcEncoding == "HTML" && dstEncoding.empty())
 	{
+		g_result.resize(256);
+
 		// from  HTML special character in ANSI code page to default encoding in NPL. 
-#if defined(WIN32) && !defined(PARAENGINE_MOBILE)
 #define ISNUMBER(c)   (((c)>='0') && ((c)<='9'))
 		// for HTML special characters &#XXXX; in ANSI code page, convert them to unicode and then encode to destination. 
 		char c;
@@ -416,32 +654,37 @@ const char* StringHelper::EncodingConvert(const char* srcEncoding, const char* d
 					wszText[0] = (WCHAR)unicode;
 					wszText[1] = L'\0';
 
-					char result[12];
-					int nResult = ::WideCharToMultiByte(CP_ACP, 0, &(wszText[0]), 1, result, 12, NULL, NULL);
-					if (nResult > 0)
-					{
-						for (int k = 0; k < nResult; ++k)
-						{
-							g_result[nResultSize++] = result[k];
-						}
-					}
+					size_t len = 0;
+
+#ifdef WIN32
+					auto result = WideCharToMultiByte(wszText, CP_ACP, &len);
+#else
+					auto result = WideCharToMultiByte(wszText, 0, &len);
+#endif
+
+					for (size_t i = 0; i < len; i++)
+						g_result[nResultSize++] = result[i];
+
 				}
 				bNewChar = false;
 			}
 		}
-#else
-		OUTPUT_LOG("error: EncodingConvert not supported in the platform\n");
-#endif
+
+		g_result[nResultSize] = '\0';
+		g_result.resize(nResultSize);
+		return g_result;
 	}
-	else if ((strcmp(dstEncoding, "HTML") == 0) && (srcEncoding == NULL || srcEncoding[0] == '\0'))
+	else if (dstEncoding == "HTML" && srcEncoding.empty())
 	{
-		wstring w_srcText = AnsiToWideChar(bytes);
+		g_result.resize(256);
+
+		wstring w_srcText = AnsiToWideChar(bytes.c_str());
 		int nSize = (int)(w_srcText.size());
 		WCHAR wChar;
 		int i = 0;
-		for (int i = 0; i<nSize && (wChar = w_srcText[i]) != 0; i++)
+		for (int i = 0; i < nSize && (wChar = w_srcText[i]) != 0; i++)
 		{
-			if ((nResultSize + 10)>(int)g_result.size())
+			if ((nResultSize + 10) > (int)g_result.size())
 				g_result.resize(g_result.size() * 2);
 
 			if (((int)wChar) < 127 && ((int)wChar) > 0)
@@ -461,10 +704,30 @@ const char* StringHelper::EncodingConvert(const char* srcEncoding, const char* d
 				g_result[nResultSize++] = ';';
 			}
 		}
+
+		g_result[nResultSize] = '\0';
+		g_result.resize(nResultSize);
+		return g_result;
 	}
-	else if ((strcmp(srcEncoding, "utf-8") == 0) && (dstEncoding == NULL || dstEncoding[0] == '\0'))
+#ifdef USE_ICONV
+	else
 	{
-		string destText = UTF8ToAnsi(bytes);
+		const string& src = srcEncoding.empty() ? defaultCPName.get() : srcEncoding;
+		const string& dst = dstEncoding.empty() ? defaultCPName.get() : dstEncoding;
+
+		if (src == dst)
+			return bytes;
+		else
+			return code_convert(srcEncoding.empty() ? defaultCPName.get().c_str() : srcEncoding.c_str()
+				, dstEncoding.empty() ? defaultCPName.get().c_str() : dstEncoding.c_str()
+				, bytes.c_str()
+				, bytes.size());
+	}
+
+#else	// USE_ICONV
+	else if (srcEncoding == "utf-8" && dstEncoding.empty())
+	{
+		string destText = UTF8ToAnsi(bytes.c_str());
 		int nSize = (int)destText.size();
 		if (g_result.size() < destText.size())
 			g_result.resize(destText.size() + 10);
@@ -473,10 +736,14 @@ const char* StringHelper::EncodingConvert(const char* srcEncoding, const char* d
 			g_result[i] = destText[i];
 			nResultSize++;
 		}
+
+		g_result[nResultSize] = '\0';
+		g_result.resize(nResultSize);
+		return g_result;
 	}
-	else if ((strcmp(dstEncoding, "utf-8") == 0) && (srcEncoding == NULL || srcEncoding[0] == '\0'))
+	else if (dstEncoding == "utf-8" && srcEncoding.empty())
 	{
-		string destText = AnsiToUTF8(bytes);
+		string destText = AnsiToUTF8(bytes.c_str());
 		int nSize = (int)destText.size();
 		if (g_result.size() < destText.size())
 			g_result.resize(destText.size() + 10);
@@ -485,30 +752,44 @@ const char* StringHelper::EncodingConvert(const char* srcEncoding, const char* d
 			g_result[i] = destText[i];
 			nResultSize++;
 		}
+
+		g_result[nResultSize] = '\0';
+		g_result.resize(nResultSize);
+		return g_result;
 	}
-	g_result[nResultSize++] = '\0';
-	return (const char*)(&(g_result[0]));
+	else
+	{
+		g_result.clear();
+		return g_result;
+	}
+
+#endif // USE_ICONV
+
 }
 
 
-bool ParaEngine::StringHelper::CopyTextToClipboard(const string& text)
+
+bool ParaEngine::StringHelper::CopyTextToClipboard(const string& text_)
 {
 #ifdef WIN32
 	if (OpenClipboard(NULL))
 	{
 		EmptyClipboard();
 
-		HGLOBAL hBlock = GlobalAlloc(GMEM_MOVEABLE, sizeof(char) * (text.size() + 1));
+		std::u16string text;
+		UTF8ToUTF16(text_, text);
+
+		HGLOBAL hBlock = GlobalAlloc(GMEM_MOVEABLE, sizeof(char16_t) * (text.size() + 1));
 		if (hBlock)
 		{
-			char *szText = (char*)GlobalLock(hBlock);
+			char16_t *szText = (char16_t*)GlobalLock(hBlock);
 			if (szText)
 			{
-				CopyMemory(szText, &(text[0]), text.size() * sizeof(char));
+				CopyMemory(szText, &(text[0]), text.size() * sizeof(char16_t));
 				szText[(int)text.size()] = '\0';  // Terminate it
 				GlobalUnlock(hBlock);
 			}
-			SetClipboardData(CF_TEXT, hBlock);
+			SetClipboardData(CF_UNICODETEXT, hBlock);
 		}
 		CloseClipboard();
 		// We must not free the object until CloseClipboard is called.
@@ -534,15 +815,14 @@ const char* ParaEngine::StringHelper::GetTextFromClipboard()
 #ifdef WIN32
 	if (OpenClipboard(NULL))
 	{
-		HANDLE handle = GetClipboardData(CF_TEXT);
+		HANDLE handle = GetClipboardData(CF_UNICODETEXT);
 		if (handle)
 		{
-			// Convert the ANSI string to Unicode, then
-			// insert to our buffer.
-			char *szText = (char*)GlobalLock(handle);
+			const char16_t *szText = (const char16_t*)GlobalLock(handle);
 			if (szText)
 			{
-				g_str = szText;
+				std::u16string szText_(szText);
+				 ParaEngine::StringHelper::UTF16ToUTF8(szText_, g_str);
 				bSucceed = true;
 				GlobalUnlock(handle);
 			}
@@ -670,10 +950,18 @@ bool ParaEngine::StringHelper::removeInValidXMLChars(std::string& data)
 RECT* ParaEngine::StringHelper::GetImageAndRect(const string &str, string &imagefile, RECT * prect)
 {
 	string srect;
-	DevideString(str, imagefile, srect);
+	size_t pos = str.find_first_of("#;");
+	if (pos != string::npos) {
+		imagefile.assign(str.c_str(), pos);
+		srect.assign(str.c_str(), pos + 1, str.size() - pos - 1);
+	}
+	else{
+		imagefile = str;
+	}
+
 	RECT rect;
 	int width, height;
-	if (sscanf(srect.c_str(), "%d %d %d %d", &rect.left, &rect.top, &width, &height) == 4)
+	if (!srect.empty() && sscanf(srect.c_str(), "%d %d %d %d", &rect.left, &rect.top, &width, &height) == 4)
 	{
 		rect.right = rect.left + width;
 		rect.bottom = rect.top + height;
@@ -745,10 +1033,10 @@ bool ParaEngine::StringHelper::RegularMatch(const char *input, const char *expre
 	return false;
 }
 
-string ParaEngine::StringHelper::md5(const char* source, bool bBinary)
+string ParaEngine::StringHelper::md5(const std::string& source, bool bBinary)
 {
 	ParaEngine::MD5 md5_hash;
-	md5_hash.feed(source);
+	md5_hash.feed((const unsigned char*)source.c_str(), source.size());
 	if (!bBinary)
 		return md5_hash.hex();
 	else
@@ -1065,6 +1353,7 @@ bool ParaEngine::StringHelper::UTF8ToUTF16(const std::string& utf8, std::u16stri
 	char* utf16ptr = reinterpret_cast<char*>(utf16);
 	const UTF8* error = nullptr;
 
+	// instead of using code_convert, we will use a faster implementation here, since this is used by all GUI Text in ParaEngine. 
 	if (llvm::ConvertUTF8toWide(2, utf8, utf16ptr, error))
 	{
 		outUtf16 = utf16;
@@ -1218,5 +1507,140 @@ bool ParaEngine::StringHelper::UTF8ToUTF16_Safe(const std::string& utf8, std::u1
 			OUTPUT_LOG("error: UTF8ToUTF16 for string %s\n", utf8.c_str());
 		}
 		return false;
+	}
+}
+
+
+void ParaEngine::StringHelper::TrimUTF16VectorFromIndex(std::vector<char16_t>& str, int index)
+{
+	int size = static_cast<int>(str.size());
+	if (index >= size || index < 0)
+		return;
+	str.erase(str.begin() + index, str.begin() + size);
+}
+
+bool ParaEngine::StringHelper::IsUnicodeSpace(char16_t ch)
+{
+	return  (ch >= 0x0009 && ch <= 0x000D) || ch == 0x0020 || ch == 0x0085 || ch == 0x00A0 || ch == 0x1680
+		|| (ch >= 0x2000 && ch <= 0x200A) || ch == 0x2028 || ch == 0x2029 || ch == 0x202F
+		|| ch == 0x205F || ch == 0x3000;
+}
+
+bool ParaEngine::StringHelper::IsCJKUnicode(char16_t ch)
+{
+	return (ch >= 0x4E00 && ch <= 0x9FBF)   // CJK Unified Ideographs
+		|| (ch >= 0x2E80 && ch <= 0x2FDF)   // CJK Radicals Supplement & Kangxi Radicals
+		|| (ch >= 0x2FF0 && ch <= 0x30FF)   // Ideographic Description Characters, CJK Symbols and Punctuation & Japanese
+		|| (ch >= 0x3100 && ch <= 0x31BF)   // Korean
+		|| (ch >= 0xAC00 && ch <= 0xD7AF)   // Hangul Syllables
+		|| (ch >= 0xF900 && ch <= 0xFAFF)   // CJK Compatibility Ideographs
+		|| (ch >= 0xFE30 && ch <= 0xFE4F)   // CJK Compatibility Forms
+		|| (ch >= 0x31C0 && ch <= 0x4DFF);  // Other extensions
+}
+
+void ParaEngine::StringHelper::TrimUTF16Vector(std::vector<char16_t>& str)
+{
+	int len = static_cast<int>(str.size());
+
+	if (len <= 0)
+		return;
+
+	int last_index = len - 1;
+
+	// Only start trimming if the last character is whitespace..
+	if (IsUnicodeSpace(str[last_index]))
+	{
+		for (int i = last_index - 1; i >= 0; --i)
+		{
+			if (IsUnicodeSpace(str[i]))
+				last_index = i;
+			else
+				break;
+		}
+
+		TrimUTF16VectorFromIndex(str, last_index);
+	}
+}
+
+unsigned int ParaEngine::StringHelper::GetIndexOfLastNotChar16(const std::vector<char16_t>& str, char16_t c)
+{
+	int len = static_cast<int>(str.size());
+
+	int i = len - 1;
+	for (; i >= 0; --i)
+		if (str[i] != c) return i;
+
+	return i;
+}
+
+std::string ParaEngine::StringHelper::sha1(const std::string& source, bool bBinary)
+{
+	SHA1Context sha;
+	int err = SHA1Reset(&sha);
+	uint8_t hash[SHA1HashSize];
+
+	if (!err)
+		err = SHA1Input(&sha, (const unsigned char *)source.c_str(), source.size());
+
+	if (!err)
+		err = SHA1Result(&sha, hash);
+
+
+	if (!err)
+	{
+		if (bBinary)
+		{
+			return string((char*)hash, SHA1HashSize);
+		}
+		else
+		{
+			char hashString[SHA1HashSize * 2 + 1];
+			SHA1ConvertMessageToString(hash, hashString);
+			return hashString;
+		}
+	}
+	else
+	{
+		return "";
+	}
+}
+
+
+std::string ParaEngine::StringHelper::base64(const std::string& source)
+{
+	auto size = source.size();
+	if (size > 0)
+	{
+		int nBufferSize = CyoEncode::Base64EncodeGetLength(size);
+		std::string outBase64Buffers;
+		outBase64Buffers.resize(nBufferSize);
+		int nSize = CyoEncode::Base64Encode(&(outBase64Buffers[0]), source.c_str(), size);
+		if (nSize >= 0 && nSize!= nBufferSize)
+			outBase64Buffers.resize(nSize);
+		return outBase64Buffers;
+	}
+	else
+	{
+		return "";
+	}
+	
+}
+
+std::string ParaEngine::StringHelper::unbase64(const std::string& source)
+{
+	auto size = source.size();
+	if (size > 0)
+	{
+		int nBufferSize = CyoDecode::Base64DecodeGetLength(size);
+		std::string out;
+		out.resize(nBufferSize);
+		int nSize = CyoDecode::Base64Decode(&(out[0]), source.c_str(), size);
+		if (nSize >= 0 && nSize != nBufferSize)
+			out.resize(nSize);
+		return out;
+	}
+	else
+	{
+		return "";
 	}
 }

@@ -97,6 +97,8 @@ bool ParaScripting::ParaBlockWorld::RegisterBlockTemplate_(CBlockWorld* pWorld, 
 	bool bIsUpdating = false;
 	bool bProvidePower = false;
 	bool bCustomBlockModel = false;
+	bool bIsVisible = true;
+	Color under_water_color = 0;
 	if (type(params) == LUA_TNUMBER)
 	{
 		attFlag = (uint32_t)(object_cast<double> (params));
@@ -137,7 +139,10 @@ bool ParaScripting::ParaBlockWorld::RegisterBlockTemplate_(CBlockWorld* pWorld, 
 			dwMapColor = Color::FromString(object_cast<const char*>(params["mapcolor"]));
 		if (type(params["opacity"]) == LUA_TNUMBER)
 			nOpacity = (int)(object_cast<double> (params["opacity"]));
-		
+		if (type(params["isVisible"]) == LUA_TBOOLEAN)
+			bIsVisible = object_cast<bool> (params["isVisible"]);	
+		if (type(params["under_water_color"]) == LUA_TSTRING)
+			under_water_color = Color::FromString(object_cast<const char*>(params["under_water_color"]));
 	}
 
 	if (bIsUpdating)
@@ -163,6 +168,23 @@ bool ParaScripting::ParaBlockWorld::RegisterBlockTemplate_(CBlockWorld* pWorld, 
 				pTemplate->SetLightOpacity(nOpacity);
 			if ((DWORD)dwMapColor !=0)
 				pTemplate->SetMapColor(dwMapColor);
+
+			if ((DWORD)under_water_color != 0)
+				pTemplate->setUnderWaterColor(under_water_color);
+
+
+			bool bRefreshBlockTemplate = false;
+			bRefreshBlockTemplate = pWorld->SetBlockVisible(templateId, bIsVisible, false) || bRefreshBlockTemplate;
+			if (nTorchLight >= 0 && pTemplate->GetTorchLight() != nTorchLight) 
+			{
+				pTemplate->SetTorchLight(nTorchLight);
+				bRefreshBlockTemplate = true;
+			}
+
+			if (bRefreshBlockTemplate)
+			{
+				pWorld->RefreshBlockTemplate(templateId);
+			}
 			return true;
 		}
 	}
@@ -206,6 +228,8 @@ bool ParaScripting::ParaBlockWorld::RegisterBlockTemplate_(CBlockWorld* pWorld, 
 				pTemplate->SetLightOpacity(nOpacity);
 			if ((DWORD)dwMapColor != 0)
 				pTemplate->SetMapColor(dwMapColor);
+			if ((DWORD)under_water_color != 0)
+				pTemplate->setUnderWaterColor(under_water_color);
 
 			if (bCustomBlockModel && type(params["models"]) == LUA_TTABLE)
 			{
@@ -449,6 +473,12 @@ void ParaScripting::ParaBlockWorld::LoadRegion(const object& pWorld_, uint16_t x
 {
 	GETBLOCKWORLD(pWorld, pWorld_);
 	pWorld->CreateGetRegion(x, y, z);
+}
+
+void ParaScripting::ParaBlockWorld::UnloadRegion(const object& pWorld_, uint16_t x, uint16_t y, uint16_t z)
+{
+	GETBLOCKWORLD(pWorld, pWorld_);
+	pWorld->UnloadRegion(x, y, z, false);
 }
 
 int ParaScripting::ParaBlockWorld::GetVersion(const object& pWorld_)

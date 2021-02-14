@@ -20,7 +20,7 @@
 #define NPL_SERVER_VERSION		"0.1"
 
 /** max pending connections for acceptors. default setting under linux is 128. we will usually make it larger for slow end-user connections. */
-#define		MAX_PENDING_CONNECTIONS		1000
+#define		DEFAULT_MAX_PENDING_CONNECTIONS		1000
 
 /** how many milliseconds to assume connection time out, default to 2 mins. */
 #define		DEFAULT_IDLE_TIMEOUT_MS		120000
@@ -37,6 +37,7 @@ m_connection_manager(),
 m_msg_dispatcher(this), // TODO: this gives a warning. find a better way to pass this pointer.
 m_strServer(NPL_DEFAULT_SERVER), 
 m_strPort(NPL_DEFAULT_PORT), 
+m_nMaxPendingConnections(DEFAULT_MAX_PENDING_CONNECTIONS), m_bIsServerStarted(false),
 m_bTCPKeepAlive(false),m_bKeepAlive(false), m_bEnableIdleTimeout(true), m_nIdleTimeoutMS(DEFAULT_IDLE_TIMEOUT_MS)
 {
 }
@@ -226,9 +227,10 @@ void NPL::CNPLNetServer::handle_resolve_local(const boost::system::error_code& e
 			}
 
 			// QUESTION: shall we set the maximum length of the queue of pending connections. 
-			m_acceptor.listen(MAX_PENDING_CONNECTIONS);
+			m_acceptor.listen(m_nMaxPendingConnections);
+			m_bIsServerStarted = true;
 
-			OUTPUT_LOG("NPL max pending incoming connections allowed is %d\n", MAX_PENDING_CONNECTIONS);
+			OUTPUT_LOG("NPL max pending incoming connections allowed is %d\n", m_nMaxPendingConnections);
 			// m_acceptor.listen();
 			// OUTPUT_LOG("NPL max pending incoming connections allowed is %d\n", m_acceptor.max_connections);
 		}
@@ -344,6 +346,21 @@ std::string NPL::CNPLNetServer::GetExternalIP()
 	return "NOT SUPPORTED YET, CHECK LOG";
 }
 
+const std::string& NPL::CNPLNetServer::GetHostPort()
+{
+	return m_strServer;
+}
+
+const std::string& NPL::CNPLNetServer::GetHostIP()
+{
+	return m_strPort;
+}
+
+bool NPL::CNPLNetServer::IsServerStarted()
+{
+	return m_bIsServerStarted;
+}
+
 void NPL::CNPLNetServer::Cleanup()
 {
 	m_msg_dispatcher.Cleanup();
@@ -366,4 +383,14 @@ bool NPL::CNPLNetServer::IsAnsiMode()
 void NPL::CNPLNetServer::EnableAnsiMode( bool bEnable )
 {
 	CNPLMsgOut_gen::g_enable_ansi_mode = bEnable;
+}
+
+void NPL::CNPLNetServer::SetMaxPendingConnections(int val)
+{
+	m_nMaxPendingConnections = val;
+}
+
+int NPL::CNPLNetServer::GetMaxPendingConnections() const
+{
+	return m_nMaxPendingConnections;
 }

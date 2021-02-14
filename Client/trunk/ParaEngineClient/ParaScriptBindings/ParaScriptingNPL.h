@@ -7,6 +7,17 @@
 #include <boost/shared_ptr.hpp>
 #include "ParaScriptingGlobal.h"
 
+
+namespace luabind
+{
+	namespace adl {
+		class object;
+	}
+	using adl::object;
+}
+
+struct lua_State;
+
 namespace ParaScripting
 {
 	using namespace luabind;
@@ -35,6 +46,9 @@ namespace ParaScripting
 		/** return the name of this runtime state. if "", it is considered an anonymous name */
 		const char* GetName() const;
 
+		object GetField(const char*  sFieldname, const object& output);
+		void SetField(const char*  sFieldname, const object& input);
+
 		/** start this runtime state in a worker thread 
 		* @return the number of threads that are currently working on the runtime state. normally this is 1. 
 		* only dll runtime state may have more than one worker thread. 
@@ -55,9 +69,16 @@ namespace ParaScripting
 		void Reset1(const char* onResetScode);
 
 		/**
-		* TODO: get statistics about this runtime environment. 
+		* get statistics about this runtime environment.
+		* e.g. local stats = NPL.GetStats({connection_count = true, nids_str=true, nids = true});
+		* @param input: this should be a table containing mapping from string to true. function will return a new table by replacing true with the actual data. such as {["connection_count"] = true, ["nids_str"] = true }, supported fields are
+		*  "connection_count" : total connection.
+		*  "nids_str": commar separated list of nids.
+		*  "nids": a table array of nids
+		*  "loadedfiles": a table array of loaded files in the current NPL runtime state
+		* @return {connection_count = 10, nids_str="101,102,"}
 		*/
-		object GetStats(const object& inout);
+		object GetStats(const object& input);
 
 		/** Get the current number of messages in the input message queue. Sometimes, a monitor or dispatcher logics may need to know the queue size of all NPL runtime states. 
 		* and a dispatcher will usually need to add new messages to the NPL state with smallest queue size. 
@@ -86,6 +107,11 @@ namespace ParaScripting
 		/** simply wait for the next message to arrive.
 		*/
 		void WaitForMessage();
+
+		/**
+		* @param nMessageCount: if not negative, this function will immediately return when the message queue size is bigger than this value.
+		*/
+		void WaitForMessage2(int nMessageCount);
 
 		/**
 		* @param inout: this should be a table {filename=true, code=true, msg=true}, specify which part of the message to retrieve in return value. 
@@ -175,12 +201,6 @@ namespace ParaScripting
 		static void call_(const char * sNPLFilename, const char* sCode);
 
 		/**
-		* return the NPL file name that is being loaded. Only call this function when the file is being initialized. i.e. at the root level. 
-		* Note: calling this function inside other functions will lead to unexpected result.
-		*/
-		static const char* GetFileName();
-
-		/**
 		* NOTE: the function name is "this" in NPL, not "this_". 
 		* associate a user defined function as the activation function of this file.
 		* add the current file name to the __act table.
@@ -203,34 +223,30 @@ namespace ParaScripting
 		/** get the attribute object. This function return a clone of this object. */
 		static ParaAttributeObject GetAttributeObject();
 
+		
 		/**
-		* load a file (in the specified runtime state) without running it. If the file is already loaded,
+		* load a new file (in the current runtime state) without activating it. If the file is already loaded,
 		* it will not be loaded again unless bReload is true. 
 		* IMPORTANT: this function is synchronous; unlike the asynchronous activation function. 
 		* LoadFile is more like "include in C++".When the function returns, contents in the file is loaded to memory. 
-		* @note: This function must be called in the same thread that hosts the specified runtime state (pState).
-		* @param pState: In which runtime state to load the file. If pState is NULL, the main runtime state is used. 
-		* @param filePath: the local relative file path. If the file extension is ".dll", it will be treated as a plug-in. if the filepath is "*.dll", it means all DLLs in that directory.
-		* @param bReload: if true, the file will be reloaded even if it is already loaded.
-		*    otherwise, the file will only be loaded if it is not loaded yet. 
-		*/
-
-		/**
-		* load a new file (in the current runtime state) without running it. If the file is already loaded,
-		* it will not be loaded again unless bReload is true. 
-		* IMPORTANT: this function is synchronous; unlike the asynchronous activation function. 
-		* LoadFile is more like "include in C++".When the function returns, contents in the file is loaded to memory. 
+		* @note: in NPL/lua, function is first class object, so loading a file means executing the code chunk in protected mode with pcall, 
+		* in most cases,  this means injecting new code to the global table. Since there may be recursions (such as A load B, while B also load A), 
+		* your loading code should not reply on the loading order to work. You need to follow basic code injection principles.
+		* For example, commonlib.gettable("") is the the commended way to inject new code to the current thread's global table. 
+		* Be careful not to pollute the global table too much, use nested table/namespace. 
+		* Different NPL applications may have their own sandbox environments, which have their own dedicated global tables, for example all `*.page` files use a separate global table per URL request in NPL Web Server App.
 		* @note: when loading an NPL file, we will first find if there is an up to date compiled version in the bin directory. if there is, 
 		* we will load the compiled version, otherwise we will use the text version.  use bin version, if source version does not exist; use bin version, if source and bin versions are both on disk (instead of zip) and that bin version is newer than the source version. 
 		* e.g. we can compile source to bin directory with file extension ".o", e.g. "script/abc.lua" can be compiled to "bin/script/abc.o", The latter will be used if available and up-to-date. 
-		* @param filePath: the local relative file path. 
+		* @param filePath: the relative to working directory file path like "script/abc.lua", or relative to calling script with "./abc.npl". 
 		* If the file extension is ".dll", it will be treated as a plug-in. Examples:
 		*	"NPLRouter.dll"			-- load a C++ or C# dll. Please note that, in windows, it looks for NPLRonter.dll; in linux, it looks for ./libNPLRouter.so 
-		*	"plugin/libNPLRouter.dll"			-- almost same as above, it is recommented to remove the heading 'lib' when loading. In windows, it looks for plugin/NPLRonter.dll; in linux, it looks for ./plugin/libNPLRouter.so
+		*	"plugin/libNPLRouter.dll"			-- almost same as above, it is reformatted to remove the heading 'lib' when loading. In windows, it looks for plugin/NPLRonter.dll; in linux, it looks for ./plugin/libNPLRouter.so
 		* @param bReload: if true, the file will be reloaded even if it is already loaded.
 		*    otherwise, the file will only be loaded if it is not loaded yet. 
 		* @remark: one should be very careful when calling with bReload set to true, since this may lead to recursive 
 		*	reloading of the same file. If this occurs, it will generate C Stack overflow error message.
+		* @return false if file is not found. it may also return the cached(exported) object. 
 		*/
 		static void load(const object& filePath, bool bReload);
 		/** for NPL managed only.*/
@@ -238,6 +254,11 @@ namespace ParaScripting
 		/** same as NPL.load(filepath, false); */
 		static void load1(const object& filePath);
 
+		/** set/get exported file module*/
+		static int export_(lua_State* L);
+		/** get filename of the file where the calling function is defined. */
+		static const char* GetFileName(lua_State* L = 0);
+		
 		/**
 		* execute a given string immediately in protected mode. 
 		* @param sCode : the code to run. the code can not be longer than some internally defined value. 
@@ -301,6 +322,7 @@ namespace ParaScripting
 		* @return sCode the output scode
 		*/
 		static const string& SerializeToSCode(const char* sStorageVar, const object& input);
+		static const string& SerializeToSCode2(const char* sStorageVar, const object& input, bool sort);
 
 		/** verify the script code. it returns true if the script code contains pure msg data or table. 
 		* this function is used to verify scode received from the network. So that the execution of a pure data in the local runtime is harmless. 
@@ -362,6 +384,7 @@ namespace ParaScripting
 		*  "connection_count" : total connection. 
 		*  "nids_str": commar separated list of nids.  
 		*  "nids": a table array of nids
+		*  "loadedfiles": a table array of loaded files in the current NPL runtime state
 		* @return {connection_count = 10, nids_str="101,102,"}
 		*/
 		static object GetStats(const object& inout);
@@ -403,12 +426,21 @@ namespace ParaScripting
 		/** this function is used by C++ API interface. */
 		static void accept_(const char* tid, const char* nid);
 
+		/** set transmission protocol, default value is 0. */
+		static void SetProtocol(const char* nid, int protocolType);
+		
+
 		/** reject and close a given connection. The connection will be closed once rejected. 
 		* [thread safe]
 		* @param nid: the temporary id or NID of the connection to be rejected. usually it is from msg.tid or msg.nid. 
-		* it can also be {nid=number|string, reason=0|1}
+		* it can also be {nid=number|string, reason=0|1|-1}
+		* reason: 
+		* - 0 or positive value is forcibly reset/disconnect (it will abort pending read/write immediately). 
+		* - 1 is another user with same nid is authenticated. The server should send a message to tell the client about this. 
+		* - -1 or negative value means gracefully close the connection when all pending data has been sent.
 		*/
 		static void reject(const object& nid);
+
 		/** this function is used by C++ API interface. */
 		static void reject_(const char* nid, int nReason = 0);
 
@@ -472,13 +504,13 @@ namespace ParaScripting
 		static void AddDNSRecord(const char * sDNSName, const char* sAddress);
 
 		/**
-		* Set the default channel ID, default value is 0. Default channel is used when NPL.activate() call¡¯s does not contain the channel property.
+		* Set the default channel ID, default value is 0. Default channel is used when NPL.activate() call's does not contain the channel property.
 		* @param channel_ID It can be a number in [0,15].default is 0
 		*/
 		static void SetDefaultChannel(int channel_ID);
 
 		/**
-		* Get the default channel ID, default value is 0. Default channel is used when NPL.activate() call¡¯s does not contain the channel property.
+		* Get the default channel ID, default value is 0. Default channel is used when NPL.activate() call's does not contain the channel property.
 		* @return channel_ID It can be a number in [0,15].default is 0
 		*/
 		static int GetDefaultChannel();
@@ -540,7 +572,7 @@ namespace ParaScripting
 		end
 		end
 		NPL.RegisterWSCallBack("http://paraengine.com/login.aspx",callbackFunc1);
-		NPL.activate("http://paraengine.com/login.aspx", {username=¡±lxz¡±});
+		NPL.activate("http://paraengine.com/login.aspx", {username=lxz});
 		* @param sWebServiceFile URL of the web service
 		* @param sCode code to be executed when the web service is called. When a two-way web service call is invoked; 
 		*  it internally will create a thread for the returning message. Please refer to .Net 3.0 network communication architecture.
@@ -671,6 +703,7 @@ namespace ParaScripting
 		*    - "d": download pool. default size is 2, for downloading files. 
 		*    - "r": rest pool. default size is 5, for REST like HTTP get/post calls.
 		*    - "w": web pool. default size is 5, for web based requests.
+		*    - "self": this will block and use the current thread instead of additional thread.
 		*/
 		static bool AppendURLRequest1(const object& url, const char* sCallback, const object& sForm, const char* sPoolName);
 
@@ -697,5 +730,20 @@ namespace ParaScripting
 		* @return true if succeed. false if parsing failed. 
 		*/
 		static bool FromJson(const char* sJson, const object& output);
+
+		/** convert from NPL/lua table object to json string. /uXXXX encoding is recognized in string. */
+		static const string& ToJson(const object& output);
+		static const string& ToJson2(const object& output, bool bUseEmptyArray);
+
+		/** compress using zlib/gzip, etc
+		* @param output: {method="zlib|gzip", content=string, [level=number, windowBits=number,] result=string}
+		* @return return true if success. 
+		*/
+		static bool Compress(const object& output);
+
+		/** compress using zlib/gzip, etc
+		* @param output: {method="zlib|gzip", content=string, [level=number, windowBits=number,] result=string}
+		*/
+		static bool Decompress(const object& output);
 	};
 }

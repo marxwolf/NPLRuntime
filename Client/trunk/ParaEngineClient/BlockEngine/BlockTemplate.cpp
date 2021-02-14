@@ -13,6 +13,8 @@
 #include "SlopeModelProvider.h"
 #include "BlockWorld.h"
 #include "SceneObject.h"
+#include "util/regularexpression.h"
+#include "StringHelper.h"
 
 namespace ParaEngine
 {
@@ -20,7 +22,7 @@ namespace ParaEngine
 
 	BlockTemplate::BlockTemplate( uint16_t id,uint32_t attFlag, uint16_t category_id) :m_id(id),m_attFlag(attFlag), m_category_id(category_id), m_fPhysicalHeight(1.f),
 		m_pNormalMap(nullptr), m_renderPriority(0), m_lightScatterStep(1), m_lightOpacity(1), m_pBlockModelFilter(NULL), m_bIsShadowCaster(true), m_associated_blockid(0), 
-		m_bProvidePower(false), m_nLightValue(0xf), m_fSpeedReductionPercent(1.f), m_renderPass(BlockRenderPass_Opaque), m_dwMapColor(Color::White)
+		m_bProvidePower(false), m_nLightValue(0xf), m_fSpeedReductionPercent(1.f), m_renderPass(BlockRenderPass_Opaque), m_dwMapColor(Color::White), m_UnderWaterColor(0)
 	{
 		Init(attFlag, category_id);
 	}
@@ -116,6 +118,8 @@ namespace ParaEngine
 
 		if (IsMatchAttribute(BlockTemplate::batt_threeSideTex))
 			uvPattern = 3;
+		else if (IsMatchAttribute(BlockTemplate::batt_fourSideTex))
+			uvPattern = 4;
 		else if (IsMatchAttribute(BlockTemplate::batt_sixSideTex))
 			uvPattern = 6;
 
@@ -134,6 +138,7 @@ namespace ParaEngine
 		}
 
 		m_block_models.resize(1);
+		SAFE_DELETE(m_pBlockModelFilter);
 
 		GetBlockModel().LoadModelByTexture(uvPattern);
 		GetBlockModel().SetCategoryID(GetCategoryID());
@@ -148,6 +153,18 @@ namespace ParaEngine
 	{
 		if(texName)
 		{
+			if (nIndex == 0 && IsMatchAttribute(BlockTemplate::batt_tiling))
+			{
+				regex r("^.+_x(\\d+)\\..+$");
+
+				cmatch num;
+				if (regex_search(texName, num, r))
+				{
+					std::string str(num[1].first, num[1].second - num[1].first);
+					mTileSize = StringHelper::StrToInt(str.c_str());
+				}
+			}
+
 			if ((int)m_textures0.size() <= nIndex)
 				m_textures0.resize(nIndex + 1, NULL);
 			m_textures0[nIndex] = CGlobals::GetAssetManager()->LoadTexture("", texName, TextureEntity::StaticTexture);
@@ -549,4 +566,13 @@ namespace ParaEngine
 		return IsMatchAttribute(batt_solid);
 	}
 
+	void BlockTemplate::setUnderWaterColor(const Color & val)
+	{
+		m_UnderWaterColor = val;
+	}
+
+	const Color & BlockTemplate::getUnderWaterColor()const
+	{
+		return m_UnderWaterColor;
+	}
 }

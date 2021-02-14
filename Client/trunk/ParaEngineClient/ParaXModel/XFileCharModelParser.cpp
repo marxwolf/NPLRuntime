@@ -5,7 +5,7 @@
 // desc: 
 //-----------------------------------------------------------------------
 #include "ParaEngine.h"
-#ifdef USE_OPENGL_RENDERER
+
 #include "util/StringHelper.h"
 #include "ParaWorldAsset.h"
 #include "ParaXModel.h"
@@ -111,7 +111,7 @@ CParaXModel* ParaEngine::XFileCharModelParser::LoadParaX_Body()
 		if (m_pParaXRawData && (m_pParaXRawData->Lock(&dwSize, &pBuffer)))
 			m_pRaw = pBuffer + 4;
 
-		if (m_xheader.type == PARAX_MODEL_ANIMATED)
+		if (m_xheader.type == PARAX_MODEL_ANIMATED || m_xheader.type == PARAX_MODEL_BMAX)
 		{
 			pMesh = new CParaXModel(m_xheader);
 
@@ -450,6 +450,7 @@ bool XFileCharModelParser::ReadXAttachments(CParaXModel& xmesh, XFileDataObjectP
 		int nAttachments = *(DWORD*)(pBuffer);
 		int nAttachmentLookup = *(((DWORD*)(pBuffer)) + 1);
 		xmesh.m_objNum.nAttachments = nAttachments;
+		xmesh.m_objNum.nAttachLookup = nAttachmentLookup;
 
 		ModelAttachmentDef *attachments = (ModelAttachmentDef *)(pBuffer + 8);
 		int32 * attLookup = (int32 *)(pBuffer + 8 + sizeof(ModelAttachmentDef)*nAttachments);
@@ -561,8 +562,27 @@ bool XFileCharModelParser::ReadXGeosets(CParaXModel& xmesh, XFileDataObjectPtr p
 			xmesh.showGeosets[i] = true;
 
 		xmesh.geosets.resize(nGeosets);
-		if (nGeosets>0)
+		if (nGeosets > 0)
+		{
 			memcpy(&xmesh.geosets[0], pGeosets, sizeof(ModelGeoset)*nGeosets);
+			if (xmesh.CheckMinVersion(1, 0, 0, 1))
+			{
+				/* since Intel is little endian.
+				for (int i = 0; i < nGeosets; ++i)
+				{
+					ModelGeoset& geoset = xmesh.geosets[i];
+					geoset.SetVertexStart((DWORD)geoset.d3 + ((DWORD)(geoset.d4) << 16));
+				}*/
+			}
+			else
+			{
+				// disable vertex start for all parax file version before 1.0.0.1, since we only support uint16 indices. 
+				for (int i = 0; i < nGeosets; ++i)
+				{
+					xmesh.geosets[i].SetVertexStart(0);
+				}
+			}
+		}
 	}
 	else
 		return false;
@@ -625,20 +645,42 @@ bool XFileCharModelParser::ReadXBones(CParaXModel& xmesh, XFileDataObjectPtr pFi
 				Bone& bone = xmesh.bones[i];
 				const ModelBoneDef&b = mb[i];
 				bone.parent = b.parent;
-				bone.pivot = b.pivot;
 				bone.flags = b.flags;
+				if ((bone.flags & 0x80000000)!=0)
+				{
+					bone.flags = bone.flags & (~0x80000000);
+					if(b.nOffsetPivot!=0)
+						bone.SetName((const char*)GetRawData(b.nBoneName));
+
+					if (bone.IsOffsetMatrixBone()) {
+						bone.matOffset = *((const Matrix4*)GetRawData(b.nOffsetMatrix));
+						bone.bUsePivot = false;
+					}
+
+					bone.pivot = *((const Vector3*)GetRawData(b.nOffsetPivot));
+					if (bone.IsStaticTransform())
+						bone.matTransform = *((const Matrix4*)GetRawData(b.ofsStaticMatrix));
+				}
+				else
+				{
+					bone.pivot = b.pivot;
+				}
 				bone.nIndex = i;
 
 				if (b.boneid>0 && b.boneid < MAX_KNOWN_BONE_NODE)
 				{
 					xmesh.m_boneLookup[b.boneid] = i;
-					bone.nBoneID = b.boneid;
+					//bone.nBoneID = b.boneid;
 				}
-
-				ReadAnimationBlock(&b.translation, bone.trans, xmesh.globalSequences);
-				ReadAnimationBlock(&b.rotation, bone.rot, xmesh.globalSequences);
-				ReadAnimationBlock(&b.scaling, bone.scale, xmesh.globalSequences);
-				bone.RemoveRedundentKeys();
+				bone.nBoneID = b.boneid;
+				
+				if (!bone.IsStaticTransform())
+				{
+					ReadAnimationBlock(&b.translation, bone.trans, xmesh.globalSequences);
+					ReadAnimationBlock(&b.rotation, bone.rot, xmesh.globalSequences);
+					ReadAnimationBlock(&b.scaling, bone.scale, xmesh.globalSequences);
+					bone.RemoveRedundentKeys();
+				}
 			}
 		}
 	}
@@ -889,4 +931,3 @@ bool XFileCharModelParser::ReadXAnimations(CParaXModel& xmesh, XFileDataObjectPt
 		return false;
 	return true;
 }
-#endif
